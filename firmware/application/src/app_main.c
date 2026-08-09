@@ -39,6 +39,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "tag_emulation.h"
 #include "usb_main.h"
 #include "rgb_marquee.h"
+#include "slot_led_policy.h"
 #include "tag_persistence.h"
 #include "settings.h"
 
@@ -577,13 +578,8 @@ static void cycle_slot(bool dec) {
     // In any case, a button event occurs and we need to get the currently active card slot first
     uint8_t slot_now = tag_emulation_get_slot();
     uint8_t slot_new = slot_now;
-    // Handle the events of a button
-    if (dec) {
-        slot_new = tag_emulation_slot_find_prev(slot_now);
-    } else {
-        slot_new = tag_emulation_slot_find_next(slot_now);
-    }
-    // Update status only if the new card slot switch is valid
+    // Physical buttons visit every slot, including empty or disabled slots.
+    slot_new = slot_cycle_adjacent(slot_now, dec, TAG_MAX_SLOT_NUM);
     tag_emulation_change_slot(slot_new, true); // Tell the analog card module that we need to switch card slots
     // Turn off the LEDs in case we were showing the battery status
     rgb_marquee_stop();

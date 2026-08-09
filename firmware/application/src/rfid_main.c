@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "rfid_main.h"
 #include "rgb_marquee.h"
+#include "slot_led_policy.h"
 
 //The current mode of the device
 device_mode_t rfid_state = DEVICE_MODE_NONE;
@@ -113,13 +114,19 @@ device_mode_t get_device_mode(void) {
 uint8_t get_color_by_slot(uint8_t slot) {
     tag_slot_specific_type_t tag_types;
     tag_emulation_get_specific_types_by_slot(slot, &tag_types);
-    bool enabled_lf = is_slot_enabled(slot, TAG_SENSE_LF);
-    bool enabled_hf = is_slot_enabled(slot, TAG_SENSE_HF);
-    if (tag_types.tag_hf != TAG_TYPE_UNDEFINED && tag_types.tag_lf != TAG_TYPE_UNDEFINED && enabled_hf && enabled_lf) {
-        return 0;   // Dual -frequency card emulation, return R, indicate a dual -frequency card
-    } else if (tag_types.tag_hf != TAG_TYPE_UNDEFINED && enabled_hf) {   //High -frequency emulation, return G
-        return 1;
-    } else {    // Low -frequency emulation, return B
-        return 2;
+    bool hf_usable = tag_types.tag_hf != TAG_TYPE_UNDEFINED &&
+                     is_slot_enabled(slot, TAG_SENSE_HF);
+    bool lf_usable = tag_types.tag_lf != TAG_TYPE_UNDEFINED &&
+                     is_slot_enabled(slot, TAG_SENSE_LF);
+    switch (slot_led_state(hf_usable, lf_usable)) {
+        case SLOT_LED_STATE_DUAL:
+            return RGB_RED;
+        case SLOT_LED_STATE_HF:
+            return RGB_GREEN;
+        case SLOT_LED_STATE_LF:
+            return RGB_BLUE;
+        case SLOT_LED_STATE_EMPTY:
+            return RGB_YELLOW;
     }
+    return RGB_YELLOW;
 }
