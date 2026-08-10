@@ -207,7 +207,6 @@ static void button_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t a
     // callback can miss a press made at the end of the transition animation.
     if (m_system_off_processing) {
         m_system_off_processing = false;
-        return;
     }
     device_mode_t mode = get_device_mode();
     // Allow button operations in both tag and reader mode

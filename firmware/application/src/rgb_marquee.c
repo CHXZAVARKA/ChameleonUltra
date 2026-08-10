@@ -28,6 +28,7 @@ NRF_LOG_MODULE_REGISTER();
 #define RAINBOW_CHARGING_DOT_STEP_MS 80U
 #define BATTERY_LEVEL_BRIGHTNESS 180U
 static nrf_drv_pwm_t pwm0_ins = NRF_DRV_PWM_INSTANCE(1);
+static nrf_drv_pwm_t rainbow_trail_pwm_ins = NRF_DRV_PWM_INSTANCE(2);
 nrf_pwm_values_individual_t pwm_sequ_val; // PWM control 4 channels in the independent mode
 nrf_pwm_sequence_t const seq = { //Configure the structure of PWM output
     .values.p_individual = &pwm_sequ_val,
@@ -43,9 +44,31 @@ nrf_drv_pwm_config_t pwm_config = {//PWM configuration structure
     .load_mode = NRF_PWM_LOAD_INDIVIDUAL, // 4 channels for four values
     .step_mode = NRF_PWM_STEP_AUTO
 };
+static nrf_pwm_values_individual_t rainbow_trail_pwm_values;
+static nrf_pwm_sequence_t const rainbow_trail_pwm_seq = {
+    .values.p_individual = &rainbow_trail_pwm_values,
+    .length = 4,
+    .repeats = 0,
+    .end_delay = 0,
+};
+static nrf_drv_pwm_config_t rainbow_trail_pwm_config = {
+    .output_pins = {
+        NRF_DRV_PWM_PIN_NOT_USED,
+        NRF_DRV_PWM_PIN_NOT_USED,
+        NRF_DRV_PWM_PIN_NOT_USED,
+        NRF_DRV_PWM_PIN_NOT_USED,
+    },
+    .irq_priority = APP_IRQ_PRIORITY_LOWEST,
+    .base_clock = NRF_PWM_CLK_1MHz,
+    .count_mode = NRF_PWM_MODE_UP,
+    .top_value = PWM_MAX,
+    .load_mode = NRF_PWM_LOAD_INDIVIDUAL,
+    .step_mode = NRF_PWM_STEP_AUTO,
+};
 static autotimer *timer;
 static autotimer *rainbow_dot_timer;
 static volatile bool pwm_initialized = false;
+static volatile bool rainbow_trail_pwm_initialized = false;
 static volatile bool rf_handoff_requested = false;
 static volatile uint8_t rf_owner_mask = 0;
 static uint8_t rgb_marquee_usb_idle_step = 0;
@@ -78,6 +101,9 @@ static void rgb_pwm_init(nrf_drv_pwm_handler_t handler) {
 static void rgb_pwm_honor_pending_rf_request(void) {
     if (rf_handoff_requested && pwm_initialized) {
         nrfx_pwm_stop(&pwm0_ins, false);
+    }
+    if (rf_handoff_requested && rainbow_trail_pwm_initialized) {
+        nrfx_pwm_stop(&rainbow_trail_pwm_ins, false);
     }
 }
 
@@ -130,14 +156,86 @@ static void rgb_clear_all_slots(void) {
     }
 }
 
-static void rainbow_light_dot(uint8_t position) {
+static void rainbow_trail_pwm_stop(void) {
+    if (!rainbow_trail_pwm_initialized) {
+        return;
+    }
+    nrfx_pwm_stop(&rainbow_trail_pwm_ins, true);
+    rainbow_trail_pwm_initialized = false;
+    nrfx_pwm_uninit(&rainbow_trail_pwm_ins);
+}
+
+static void rainbow_trail_set_value(uint8_t channel, uint16_t value) {
+    switch (channel) {
+        case 0:
+            rainbow_trail_pwm_values.channel_0 = value;
+            break;
+        case 1:
+            rainbow_trail_pwm_values.channel_1 = value;
+            break;
+        case 2:
+            rainbow_trail_pwm_values.channel_2 = value;
+            break;
+        default:
+            rainbow_trail_pwm_values.channel_3 = value;
+            break;
+    }
+}
+
+static uint16_t rainbow_trail_pwm_value(uint8_t level) {
+    switch (level) {
+        case 99:
+            return 1U;
+        case 60:
+            return 600U;
+        case 30:
+            return 880U;
+        default:
+            return 980U;
+    }
+}
+
+static bool rainbow_show_trail(uint32_t step) {
     uint32_t *led_array = hw_get_led_array();
-    rgb_clear_all_slots();
+    uint8_t channel = 0U;
+
+    rainbow_trail_pwm_stop();
     for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-        if (i == position) {
-            nrf_gpio_pin_set(led_array[i]);
+        uint8_t level = led_bounce_trail_level(step, i, RGB_LIST_NUM);
+        if (level != 0U) {
+            rainbow_trail_pwm_config.output_pins[channel] = led_array[i];
+            rainbow_trail_set_value(channel, rainbow_trail_pwm_value(level));
+            channel++;
         }
     }
+    while (channel < NRF_PWM_CHANNEL_COUNT) {
+        rainbow_trail_pwm_config.output_pins[channel] = NRF_DRV_PWM_PIN_NOT_USED;
+        rainbow_trail_set_value(channel, PWM_MAX);
+        channel++;
+    }
+
+    bool started = false;
+    CRITICAL_REGION_ENTER();
+    if (rgb_decorative_leds_available()) {
+        rgb_clear_all_slots();
+        ret_code_t err_code = nrf_drv_pwm_init(
+            &rainbow_trail_pwm_ins,
+            &rainbow_trail_pwm_config,
+            NULL
+        );
+        APP_ERROR_CHECK(err_code);
+        rainbow_trail_pwm_initialized = true;
+        nrf_drv_pwm_simple_playback(
+            &rainbow_trail_pwm_ins,
+            &rainbow_trail_pwm_seq,
+            1,
+            NRF_DRV_PWM_FLAG_LOOP
+        );
+        started = true;
+    }
+    CRITICAL_REGION_EXIT();
+    rgb_pwm_honor_pending_rf_request();
+    return started && rgb_decorative_leds_available();
 }
 
 static void rainbow_advance_dot(uint32_t interval_ms, bool require_usb_enabled) {
@@ -145,13 +243,19 @@ static void rainbow_advance_dot(uint32_t interval_ms, bool require_usb_enabled) 
         return;
     }
     bsp_set_timer(rainbow_dot_timer, 0);
+    bool advance = false;
+    uint32_t next_step = 0U;
     CRITICAL_REGION_ENTER();
     if (rf_owner_mask == 0 && !rf_handoff_requested &&
             (!require_usb_enabled || g_usb_led_marquee_enable)) {
         rainbow_dot_step++;
-        rainbow_light_dot(led_bounce_position(rainbow_dot_step, RGB_LIST_NUM));
+        next_step = rainbow_dot_step;
+        advance = true;
     }
     CRITICAL_REGION_EXIT();
+    if (advance) {
+        rainbow_show_trail(next_step);
+    }
 }
 
 static bool rainbow_pwm_start(
@@ -170,7 +274,6 @@ static bool rainbow_pwm_start(
     bool started = false;
     CRITICAL_REGION_ENTER();
     if (rf_owner_mask == 0 && !rf_handoff_requested) {
-        rainbow_light_dot(0);
         rainbow_dot_step = 0;
         bsp_set_timer(rainbow_dot_timer, 0);
 
@@ -186,6 +289,10 @@ static bool rainbow_pwm_start(
         started = true;
     }
     CRITICAL_REGION_EXIT();
+    if (started && !rainbow_show_trail(0)) {
+        rgb_marquee_stop();
+        started = false;
+    }
     rgb_pwm_honor_pending_rf_request();
     return started && rf_owner_mask == 0 && !rf_handoff_requested;
 }
@@ -201,6 +308,7 @@ void rgb_marquee_stop(void) {
         nrfx_pwm_stop(&pwm0_ins, true);
         rgb_pwm_uninit();//turn off pwm output
     }
+    rainbow_trail_pwm_stop();
     rgb_marquee_usb_idle_step = 0;
     rgb_marquee_usb_open_step = 0;
     rainbow_transition_active = false;
@@ -225,8 +333,8 @@ bool rgb_marquee_transition_rainbow_poll(void) {
     if (!rainbow_transition_active) {
         return false;
     }
-    rainbow_advance_dot(RAINBOW_TRANSITION_DOT_STEP_MS, false);
     if (!rainbow_playback_finished && NO_TIMEOUT_1MS(timer, RAINBOW_TRANSITION_TIMEOUT_MS)) {
+        rainbow_advance_dot(RAINBOW_TRANSITION_DOT_STEP_MS, false);
         return false;
     }
     rgb_marquee_stop();

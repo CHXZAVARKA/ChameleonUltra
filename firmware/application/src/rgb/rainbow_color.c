@@ -107,6 +107,26 @@ uint8_t led_bounce_position(uint32_t step, uint8_t position_count) {
     return offset <= last ? offset : (uint8_t)(period - offset);
 }
 
+uint8_t led_bounce_trail_level(
+    uint32_t step,
+    uint8_t position,
+    uint8_t position_count
+) {
+    static const uint8_t levels[] = {99U, 60U, 30U, 1U};
+    uint8_t level = 0U;
+
+    if (position_count == 0U || position >= position_count) {
+        return 0U;
+    }
+    for (uint8_t age = 0U; age < sizeof(levels) && age <= step; age++) {
+        if (led_bounce_position(step - age, position_count) == position &&
+                levels[age] > level) {
+            level = levels[age];
+        }
+    }
+    return level;
+}
+
 uint16_t rainbow_pwm_compare(uint8_t intensity, uint16_t pwm_top) {
     uint32_t squared = (uint32_t)intensity * intensity;
     uint32_t on_time = (squared * pwm_top + 32512U) / 65025U;

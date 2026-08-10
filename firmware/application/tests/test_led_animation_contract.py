@@ -27,12 +27,26 @@ shutdown = extract_function(
 assert "rgb_marquee_transition_rainbow_start();" in shutdown
 assert "shutdown_interrupted_by_activity()" in shutdown
 assert shutdown.count("shutdown_interrupted_by_activity()") >= 4
+transition_poll = extract_function(
+    RGB_MARQUEE,
+    "bool rgb_marquee_transition_rainbow_poll",
+    "// reset RGB state machines",
+)
+assert transition_poll.index("rainbow_playback_finished") < transition_poll.index(
+    "rainbow_advance_dot"
+)
 assert "static volatile bool m_system_off_processing" in APP_MAIN
-assert "if (m_system_off_processing)" in extract_function(
+button_handler = extract_function(
     APP_MAIN,
     "static void button_pin_handler",
     "static void timer_button_event_handle",
 )
+assert "if (m_system_off_processing)" in button_handler
+shutdown_cancel = button_handler[
+    button_handler.index("if (m_system_off_processing)") :
+    button_handler.index("device_mode_t mode")
+]
+assert "return;" not in shutdown_cancel
 assert "rgb_marquee_rf_owns_leds()" in APP_MAIN
 assert "rgb_marquee_rf_ownership_pending()" in APP_MAIN
 assert "nrfx_power_usbstatus_get()" in APP_MAIN

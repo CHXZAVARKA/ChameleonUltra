@@ -67,6 +67,20 @@ int main(void) {
     assert(led_bounce_position(255, 8) == 3);
     assert(led_bounce_position(256, 8) == 4);
 
+    const uint8_t expected_forward_trail[] = {1, 30, 60, 99, 0, 0, 0, 0};
+    const uint8_t expected_edge_trail[] = {0, 0, 0, 0, 1, 30, 60, 99};
+    const uint8_t expected_reversal_trail[] = {0, 0, 0, 0, 0, 1, 99, 60};
+    const uint8_t expected_return_trail[] = {99, 60, 30, 1, 0, 0, 0, 0};
+    for (uint8_t led = 0; led < 8; led++) {
+        assert(led_bounce_trail_level(3, led, 8) == expected_forward_trail[led]);
+        assert(led_bounce_trail_level(7, led, 8) == expected_edge_trail[led]);
+        assert(led_bounce_trail_level(8, led, 8) == expected_reversal_trail[led]);
+        assert(led_bounce_trail_level(14, led, 8) == expected_return_trail[led]);
+    }
+    assert(led_bounce_trail_level(0, 0, 8) == 99);
+    assert(led_bounce_trail_level(0, 1, 8) == 0);
+    assert(led_bounce_trail_level(37, 0, 0) == 0);
+
     puts("rainbow color tests passed");
     return 0;
 }
