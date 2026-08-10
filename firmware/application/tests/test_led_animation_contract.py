@@ -7,6 +7,7 @@ from pathlib import Path
 SOURCE_DIR = Path(__file__).resolve().parents[1] / "src"
 APP_MAIN = (SOURCE_DIR / "app_main.c").read_text(encoding="utf-8")
 RGB_MARQUEE = (SOURCE_DIR / "rgb_marquee.c").read_text(encoding="utf-8")
+RFID_MAIN = (SOURCE_DIR / "rfid_main.c").read_text(encoding="utf-8")
 HF_TAG = (SOURCE_DIR / "rfid/nfctag/hf/nfc_14a.c").read_text(encoding="utf-8")
 LF_TAG = (SOURCE_DIR / "rfid/nfctag/lf/lf_tag_em.c").read_text(encoding="utf-8")
 
@@ -87,4 +88,24 @@ assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);" in extract_
 assert "nrfx_pwm_stop(&pwm0_ins, false);" in RGB_MARQUEE
 assert "rf_owner_mask" in RGB_MARQUEE
 assert "CRITICAL_REGION_ENTER();" in RGB_MARQUEE
+for writer, next_writer in (
+    ("void rgb_marquee_usb_open_sweep", "void rgb_marquee_usb_open_symmetric"),
+    ("void rgb_marquee_usb_open_symmetric", "void rgb_marquee_sweep_to"),
+    ("void rgb_marquee_sweep_to", "volatile bool callback_waiting"),
+    ("void rgb_marquee_slot_switch", "void rgb_marquee_sweep_fade"),
+    ("void rgb_marquee_sweep_fade", "void rgb_marquee_sweep_from_to"),
+    ("void rgb_marquee_sweep_from_to", "void rgb_marquee_usb_idle"),
+    ("void rgb_marquee_symmetric_out", "void rgb_marquee_symmetric_in"),
+    ("void rgb_marquee_symmetric_in", "bool rgb_marquee_is_enabled"),
+):
+    body = extract_function(RGB_MARQUEE, writer, next_writer)
+    assert "rgb_decorative_leds_available()" in body
+    assert "CRITICAL_REGION_ENTER();" in body
+slot_change = extract_function(
+    RFID_MAIN,
+    "void apply_slot_change",
+    "device_mode_t get_device_mode",
+)
+assert "if (rgb_marquee_rf_owns_leds())" in slot_change
+assert "light_up_by_slot();" in slot_change
 assert "rgb_marquee_complete_rf_handoff" in APP_MAIN

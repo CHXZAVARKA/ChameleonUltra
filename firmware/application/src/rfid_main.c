@@ -92,6 +92,21 @@ void light_up_by_slot(void) {
  * @brief Apply visual and state changes after switching slot
  */
 void apply_slot_change(uint8_t slot_now, uint8_t slot_new) {
+    bool rf_updated = false;
+    CRITICAL_REGION_ENTER();
+    if (rgb_marquee_rf_owns_leds()) {
+        if (rgb_marquee_rf_source_owns_leds(RGB_MARQUEE_RF_SOURCE_HF)) {
+            set_slot_light_color(RGB_GREEN);
+        } else {
+            set_slot_light_color(RGB_BLUE);
+        }
+        light_up_by_slot();
+        rf_updated = true;
+    }
+    CRITICAL_REGION_EXIT();
+    if (rf_updated) {
+        return;
+    }
     uint8_t color_now = get_color_by_slot(slot_now);
     uint8_t color_new = get_color_by_slot(slot_new);
     rgb_marquee_slot_switch(slot_now, color_now, slot_new, color_new);
