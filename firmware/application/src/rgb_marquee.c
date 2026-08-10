@@ -44,7 +44,7 @@ static bool pwm_initialized = false;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_values_individual_t rainbow_pwm_values[RAINBOW_FRAME_COUNT];
-static bool rainbow_boot_active = false;
+static volatile bool rainbow_boot_active = false;
 static volatile bool rainbow_playback_finished = false;
 extern bool g_usb_led_marquee_enable;
 
@@ -376,6 +376,8 @@ static void rgb_marquee_slot_switch_pwm_callback(nrfx_pwm_evt_type_t event_type)
     }
 }
 void rgb_marquee_slot_switch(uint8_t led_down, uint8_t color_led_down, uint8_t led_up, uint8_t color_led_up) {
+    // A slot command takes ownership from any decorative boot/charging playback.
+    rgb_marquee_stop();
     int16_t light_level = 99; //ledBrightnessValue
     uint32_t *led_pins = hw_get_led_array();
     if (led_down >= 0 && led_down <= 7) {

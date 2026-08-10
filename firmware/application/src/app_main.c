@@ -581,6 +581,7 @@ static void boot_rainbow_process(void) {
     if (g_is_tag_emulating) {
         // HF/LF emulation has priority over decorative playback.
         rgb_marquee_stop();
+        return;
     } else if (!rgb_marquee_boot_rainbow_poll()) {
         return;
     }
