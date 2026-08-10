@@ -10,6 +10,7 @@
 #include "app_cmd.h"
 #include "app_status.h"
 #include "tag_persistence.h"
+#include "slot_reorder_protocol.h"
 #include "nrf_pwr_mgmt.h"
 #include "settings.h"
 #include "delayed_reset.h"
@@ -960,12 +961,21 @@ static data_frame_tx_t *cmd_processor_set_active_slot(uint16_t cmd, uint16_t sta
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 
+static bool swap_slots_callback(uint8_t source, uint8_t target, void *context) {
+    (void)context;
+    return tag_emulation_swap_slots(source, target);
+}
+
 static data_frame_tx_t *cmd_processor_swap_slots(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    if (length != 2 || data[0] >= TAG_MAX_SLOT_NUM || data[1] >= TAG_MAX_SLOT_NUM) {
-        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
-    }
-    status = tag_emulation_swap_slots(data[0], data[1]) ? STATUS_SUCCESS : STATUS_FLASH_WRITE_FAIL;
-    return data_frame_make(cmd, status, 0, NULL);
+    (void)status;
+    tag_slot_swap_protocol_response_t response = tag_slot_swap_protocol_process(
+        cmd,
+        length,
+        data,
+        swap_slots_callback,
+        NULL
+    );
+    return data_frame_make(response.command, response.status, 0, NULL);
 }
 
 static data_frame_tx_t *cmd_processor_set_slot_tag_type(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
