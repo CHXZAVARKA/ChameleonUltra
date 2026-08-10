@@ -470,9 +470,7 @@ static void check_wakeup_src(void) {
         // Button wake-up boot animation
         uint8_t animation_config = settings_get_animation_config();
         if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_sweep_to(color, !dir, 11);
-            rgb_marquee_sweep_to(color, dir, 11);
-            rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
+            rgb_marquee_boot_rainbow();
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
         } else if (animation_config == SettingsAnimationModeSymmetric) {
@@ -481,7 +479,8 @@ static void check_wakeup_src(void) {
             set_slot_light_color(color);
         }
 
-        // The indicator of the current card slot lights up at the end of the animation
+        // The indicator of the current card slot lights up at the end of the animation.
+        set_slot_light_color(color);
         light_up_by_slot();
 
         // If no operation follows, wait for the timeout and then deep hibernate
@@ -506,15 +505,8 @@ static void check_wakeup_src(void) {
         // It is currently the wake-up system of the emulation card event, we can make the strong lights on the field first
         TAG_FIELD_LED_ON();
 
-        uint8_t animation_config = settings_get_animation_config();
-        if (animation_config == SettingsAnimationModeFull) {
-            // In the case of field wake-up, only one round of RGB is swept as the power-on animation
-            rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
-        } else if (animation_config == SettingsAnimationModeSymmetric) {
-            rgb_marquee_symmetric_out(color, slot);
-        } else {
-            set_slot_light_color(color);
-        }
+        // Field wake-up must enter emulation immediately, without a startup animation.
+        set_slot_light_color(color);
         light_up_by_slot();
 
         // We can only run tag emulation at field wakeup source.
@@ -522,6 +514,12 @@ static void check_wakeup_src(void) {
     } else if (m_reset_source & NRF_POWER_RESETREAS_VBUS_MASK) {
         // nrfx_power_usbstatus_get() can check usb attach status
         NRF_LOG_INFO("WakeUp from VBUS(USB)");
+
+        if (settings_get_animation_config() == SettingsAnimationModeFull) {
+            rgb_marquee_boot_rainbow();
+            set_slot_light_color(color);
+            light_up_by_slot();
+        }
 
         // USB plugged in and open communication break has its own light effect, no need to light up for the time being
         // set_slot_light_color(color);
@@ -543,9 +541,7 @@ static void check_wakeup_src(void) {
         // RGB
         uint8_t animation_config = settings_get_animation_config();
         if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_sweep_to(0, !dir, 11);
-            rgb_marquee_sweep_to(1, dir, 11);
-            rgb_marquee_sweep_to(2, !dir, 11);
+            rgb_marquee_boot_rainbow();
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_from_to(0, 0, 2);
             rgb_marquee_sweep_from_to(1, 2, 5);
@@ -920,6 +916,7 @@ extern bool g_usb_led_marquee_enable;
 static void button_press_process(void) {
     // Make sure that one of the AB buttons has a click event
     if (m_is_b_btn_release || m_is_a_btn_release) {
+        rgb_marquee_stop();
         if (m_is_a_btn_release) {
             if (!m_is_btn_long_press) {
                 run_button_function_by_settings(settings_get_button_press_config('a'));

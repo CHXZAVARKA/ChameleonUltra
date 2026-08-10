@@ -15,6 +15,7 @@ SRC_FILES += \
   $(PROJ_DIR)/settings.c \
   $(PROJ_DIR)/usb_main.c \
   $(PROJ_DIR)/rgb_marquee.c \
+  $(PROJ_DIR)/rgb/rainbow_color.c \
   $(PROJ_DIR)/bsp/bsp_delay.c \
   $(PROJ_DIR)/bsp/bsp_time.c \
   $(PROJ_DIR)/bsp/bsp_wdt.c \
@@ -189,6 +190,7 @@ INC_FOLDERS += \
   ${PROJ_DIR}/bsp/ \
   ${PROJ_DIR}/utils/ \
   ${PROJ_DIR}/rfid/ \
+  ${PROJ_DIR}/rgb/ \
   ${PROJ_DIR}/rfid/nfctag/ \
   ${PROJ_DIR}/rfid/nfctag/hf \
   ${PROJ_DIR}/rfid/nfctag/lf \
