@@ -101,6 +101,13 @@ static void rainbow_light_all_slots(void) {
     }
 }
 
+static void rgb_clear_all_slots(void) {
+    uint32_t *led_array = hw_get_led_array();
+    for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+        nrf_gpio_pin_clear(led_array[i]);
+    }
+}
+
 static void rainbow_pwm_start(
     uint8_t brightness,
     nrf_pwm_sequence_t const *sequence,
@@ -200,6 +207,8 @@ void rgb_marquee_usb_open_sweep(uint8_t color, uint8_t dir) {
     }
 
     if (rgb_marquee_usb_open_step == 0) {
+        rgb_marquee_stop();
+        rgb_clear_all_slots();
         //Adjust the color
         set_slot_light_color(color);
         pwm_sequ_val.channel_0 = 1;
@@ -250,6 +259,8 @@ void rgb_marquee_usb_open_symmetric(uint8_t color) {
     }
 
     if (rgb_marquee_usb_open_step == 0) {
+        rgb_marquee_stop();
+        rgb_clear_all_slots();
         //Adjust the color
         set_slot_light_color(color);
         pwm_sequ_val.channel_0 = 1;

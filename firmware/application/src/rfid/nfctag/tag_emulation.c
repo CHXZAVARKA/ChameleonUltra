@@ -30,7 +30,7 @@ NRF_LOG_MODULE_REGISTER();
  */
 
 // Is the logo in the analog card?
-bool g_is_tag_emulating = false;
+volatile bool g_is_tag_emulating = false;
 
 static tag_specific_type_t tag_specific_type_old2new_lf_values[][2] = {TAG_SPECIFIC_TYPE_OLD2NEW_LF_VALUES};
 static tag_specific_type_t tag_specific_type_old2new_hf_values[][2] = {TAG_SPECIFIC_TYPE_OLD2NEW_HF_VALUES};

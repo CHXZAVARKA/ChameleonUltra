@@ -581,6 +581,18 @@ static void check_wakeup_src(void) {
     }
 }
 
+static void restore_slot_led_after_marquee(void) {
+    // RF callbacks also own the RGB GPIO latch. Recheck their state atomically
+    // so main never overwrites a GREEN/BLUE field indication after an IRQ.
+    CRITICAL_REGION_ENTER();
+    if (!g_is_tag_emulating) {
+        uint8_t slot = tag_emulation_get_slot();
+        set_slot_light_color(get_color_by_slot(slot));
+    }
+    light_up_by_slot();
+    CRITICAL_REGION_EXIT();
+}
+
 static void boot_rainbow_process(void) {
     if (!rgb_marquee_boot_rainbow_is_active()) {
         m_boot_rainbow_requires_usb = false;
@@ -591,9 +603,7 @@ static void boot_rainbow_process(void) {
         // HF/LF emulation has priority over decorative playback.
         rgb_marquee_stop();
         m_boot_rainbow_requires_usb = false;
-        // Keep the GREEN/BLUE field color selected by the interrupt handler,
-        // but collapse the decorative all-position mask back to the active slot.
-        light_up_by_slot();
+        restore_slot_led_after_marquee();
         return;
     } else if (m_boot_rainbow_requires_usb &&
                nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
@@ -604,9 +614,7 @@ static void boot_rainbow_process(void) {
     }
 
     m_boot_rainbow_requires_usb = false;
-    uint8_t slot = tag_emulation_get_slot();
-    set_slot_light_color(get_color_by_slot(slot));
-    light_up_by_slot();
+    restore_slot_led_after_marquee();
 }
 
 /**@brief change slot
@@ -985,14 +993,9 @@ static void button_press_process(void) {
 }
 
 extern bool g_usb_port_opened;
-static void stop_usb_marquee(uint8_t slot_color) {
+static void stop_usb_marquee(void) {
     rgb_marquee_stop();
-    if (!g_is_tag_emulating) {
-        set_slot_light_color(slot_color);
-    }
-    // Preserve a field handler's GREEN/BLUE color while returning the
-    // decorative all-position mask to the active slot.
-    light_up_by_slot();
+    restore_slot_led_after_marquee();
 }
 
 static void blink_usb_led_status(void) {
@@ -1003,7 +1006,7 @@ static void blink_usb_led_status(void) {
     if (nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
         if (is_working) {
             is_working = false;
-            stop_usb_marquee(color);
+            stop_usb_marquee();
         }
     } else {
         // The light effect is enabled and can be displayed
@@ -1022,7 +1025,7 @@ static void blink_usb_led_status(void) {
         } else {
             if (is_working) {
                 is_working = false;
-                stop_usb_marquee(color);
+                stop_usb_marquee();
             }
         }
     }
