@@ -1,5 +1,6 @@
 #include "math.h"
 #include "app_error.h"
+#include "app_util_platform.h"
 #include "nrf_gpio.h"
 #include "hw_connect.h"
 #include "bsp_delay.h"
@@ -44,7 +45,8 @@ nrf_drv_pwm_config_t pwm_config = {//PWM configuration structure
 };
 static autotimer *timer;
 static autotimer *rainbow_dot_timer;
-static bool pwm_initialized = false;
+static volatile bool pwm_initialized = false;
+static volatile bool rf_ownership_requested = false;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_values_individual_t rainbow_pwm_values[RAINBOW_FRAME_COUNT];
@@ -54,11 +56,15 @@ static uint32_t rainbow_dot_step = 0;
 extern bool g_usb_led_marquee_enable;
 
 static void rgb_pwm_uninit(void) {
-    if (!pwm_initialized) {
+    bool was_initialized;
+    CRITICAL_REGION_ENTER();
+    was_initialized = pwm_initialized;
+    pwm_initialized = false;
+    CRITICAL_REGION_EXIT();
+    if (!was_initialized) {
         return;
     }
     nrfx_pwm_uninit(&pwm0_ins);
-    pwm_initialized = false;
 }
 
 static void rgb_pwm_init(nrf_drv_pwm_handler_t handler) {
@@ -66,6 +72,19 @@ static void rgb_pwm_init(nrf_drv_pwm_handler_t handler) {
     ret_code_t err_code = nrf_drv_pwm_init(&pwm0_ins, &pwm_config, handler);
     APP_ERROR_CHECK(err_code);
     pwm_initialized = true;
+}
+
+static void rgb_pwm_honor_pending_rf_request(void) {
+    if (rf_ownership_requested && pwm_initialized) {
+        nrfx_pwm_stop(&pwm0_ins, false);
+    }
+}
+
+static void rgb_pwm_select_shared_color_output(void) {
+    pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    pwm_config.output_pins[3] = NRF_DRV_PWM_PIN_NOT_USED;
 }
 
 static nrf_pwm_sequence_t const rainbow_transition_seq = {
@@ -116,13 +135,17 @@ static void rainbow_light_dot(uint8_t position) {
     }
 }
 
-static void rainbow_advance_dot(uint32_t interval_ms) {
+static void rainbow_advance_dot(uint32_t interval_ms, bool require_usb_enabled) {
     if (rainbow_dot_timer->time < interval_ms) {
         return;
     }
     bsp_set_timer(rainbow_dot_timer, 0);
-    rainbow_dot_step++;
-    rainbow_light_dot(led_bounce_position(rainbow_dot_step, RGB_LIST_NUM));
+    CRITICAL_REGION_ENTER();
+    if (!require_usb_enabled || g_usb_led_marquee_enable) {
+        rainbow_dot_step++;
+        rainbow_light_dot(led_bounce_position(rainbow_dot_step, RGB_LIST_NUM));
+    }
+    CRITICAL_REGION_EXIT();
 }
 
 static void rainbow_pwm_start(
@@ -139,10 +162,7 @@ static void rainbow_pwm_start(
     rainbow_dot_step = 0;
     bsp_set_timer(rainbow_dot_timer, 0);
 
-    pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
-    pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
-    pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
-    pwm_config.output_pins[3] = NRF_DRV_PWM_PIN_NOT_USED;
+    rgb_pwm_select_shared_color_output();
 
     rainbow_transition_active = transition_animation;
     rainbow_playback_finished = false;
@@ -151,6 +171,7 @@ static void rainbow_pwm_start(
     }
     rgb_pwm_init(rainbow_pwm_callback);
     nrf_drv_pwm_simple_playback(&pwm0_ins, sequence, 1, flags);
+    rgb_pwm_honor_pending_rf_request();
 }
 
 
@@ -188,7 +209,7 @@ bool rgb_marquee_transition_rainbow_poll(void) {
     if (!rainbow_transition_active) {
         return false;
     }
-    rainbow_advance_dot(RAINBOW_TRANSITION_DOT_STEP_MS);
+    rainbow_advance_dot(RAINBOW_TRANSITION_DOT_STEP_MS, false);
     if (!rainbow_playback_finished && NO_TIMEOUT_1MS(timer, RAINBOW_TRANSITION_TIMEOUT_MS)) {
         return false;
     }
@@ -595,7 +616,7 @@ void rgb_marquee_usb_idle(void) {
         rgb_marquee_usb_idle_step = 1;
         return;
     }
-    rainbow_advance_dot(RAINBOW_CHARGING_DOT_STEP_MS);
+    rainbow_advance_dot(RAINBOW_CHARGING_DOT_STEP_MS, true);
 }
 
 void rgb_marquee_show_battery_level(uint8_t percentage) {
@@ -610,12 +631,10 @@ void rgb_marquee_show_battery_level(uint8_t percentage) {
     pwm_sequ_val.channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
     pwm_sequ_val.channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
     pwm_sequ_val.channel_3 = PWM_MAX;
-    pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
-    pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
-    pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
-    pwm_config.output_pins[3] = NRF_DRV_PWM_PIN_NOT_USED;
+    rgb_pwm_select_shared_color_output();
     rgb_pwm_init(NULL);
     nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+    rgb_pwm_honor_pending_rf_request();
 }
 
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot) {
@@ -746,4 +765,26 @@ void rgb_marquee_symmetric_in(uint8_t color, uint8_t slot) {
  */
 bool rgb_marquee_is_enabled(void) {
     return g_usb_led_marquee_enable;
+}
+
+void rgb_marquee_request_rf_ownership(void) {
+    rf_ownership_requested = true;
+    rgb_pwm_honor_pending_rf_request();
+}
+
+bool rgb_marquee_rf_ownership_pending(void) {
+    return rf_ownership_requested;
+}
+
+bool rgb_marquee_complete_rf_handoff(void) {
+    bool requested;
+    CRITICAL_REGION_ENTER();
+    requested = rf_ownership_requested;
+    rf_ownership_requested = false;
+    CRITICAL_REGION_EXIT();
+    if (!requested) {
+        return false;
+    }
+    rgb_marquee_stop();
+    return true;
 }

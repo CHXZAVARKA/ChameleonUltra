@@ -14,6 +14,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "byte_mirror.h"
 
 #include "rfid_main.h"
+#include "rgb_marquee.h"
 #include "syssleep.h"
 #include "tag_emulation.h"
 
@@ -649,6 +650,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
         case NRFX_NFCT_EVT_FIELD_DETECTED: {
             sleep_timer_stop();
 
+            rgb_marquee_request_rf_ownership();
             g_is_tag_emulating = true;
             g_usb_led_marquee_enable = false;
 

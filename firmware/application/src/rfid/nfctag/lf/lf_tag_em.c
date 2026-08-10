@@ -15,6 +15,7 @@
 #include "protocols/jablotron.h"
 #include "protocols/pac.h"
 #include "protocols/viking.h"
+#include "rgb_marquee.h"
 #include "syssleep.h"
 #include "tag_emulation.h"
 #include "tag_persistence.h"
@@ -83,6 +84,7 @@ static void lpcomp_event_handler(nrf_lpcomp_event_t event) {
 
     // set the emulation status logo bit
     m_is_lf_emulating = true;
+    rgb_marquee_request_rf_ownership();
     g_is_tag_emulating = true;
     // turn off USB light effect when emulating cards
     g_usb_led_marquee_enable = false;

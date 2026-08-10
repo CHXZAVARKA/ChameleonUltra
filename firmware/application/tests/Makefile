@@ -11,6 +11,7 @@ test: $(TEST_BINARY) $(RAINBOW_TEST_BINARY)
 	$(TEST_BINARY)
 	$(RAINBOW_TEST_BINARY)
 	python3 test_app_cmd_contract.py
+	python3 test_led_animation_contract.py
 
 $(TEST_BINARY): test_slot_reorder.c \
 	$(SOURCE_DIR)/rfid/nfctag/slot_reorder.c \

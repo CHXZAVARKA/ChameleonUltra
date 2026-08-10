@@ -291,6 +291,19 @@ static void button_init(void) {
 
 /**@brief The implementation function to enter deep hibernation
  */
+static bool shutdown_interrupted_by_activity(void) {
+    if (!m_system_off_processing) {
+        return true;
+    }
+    if (g_is_tag_emulating ||
+            rgb_marquee_rf_ownership_pending() ||
+            nrfx_power_usbstatus_get() != NRFX_POWER_USB_STATE_DISCONNECTED) {
+        m_system_off_processing = false;
+        return true;
+    }
+    return false;
+}
+
 static void system_off_enter(void) {
     ret_code_t ret;
     m_system_off_processing = true;
@@ -327,9 +340,16 @@ static void system_off_enter(void) {
         }
         if (animation_config == SettingsAnimationModeFull) {
             rgb_marquee_transition_rainbow_start();
-            while (m_system_off_processing &&
-                   rgb_marquee_transition_rainbow_is_active()) {
-                if (rgb_marquee_transition_rainbow_poll()) {
+            while (rgb_marquee_transition_rainbow_is_active()) {
+                bool interrupted;
+                bool finished = false;
+                CRITICAL_REGION_ENTER();
+                interrupted = shutdown_interrupted_by_activity();
+                if (!interrupted) {
+                    finished = rgb_marquee_transition_rainbow_poll();
+                }
+                CRITICAL_REGION_EXIT();
+                if (interrupted || finished) {
                     break;
                 }
                 bsp_delay_ms(5);
@@ -340,12 +360,20 @@ static void system_off_enter(void) {
             if (m_system_off_processing) rgb_marquee_symmetric_in(color, slot);
         }
         rgb_marquee_stop();
+        shutdown_interrupted_by_activity();
         if (!m_system_off_processing) {
+            rgb_marquee_complete_rf_handoff();
             for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
                 nrf_gpio_pin_clear(p_led_array[i]);
             }
+            if (!g_is_tag_emulating) {
+                set_slot_light_color(get_color_by_slot(tag_emulation_get_slot()));
+            }
             light_up_by_slot();
-            sleep_timer_start(SLEEP_DELAY_MS_BUTTON_CLICK);
+            if (!g_is_tag_emulating &&
+                    nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
+                sleep_timer_start(SLEEP_DELAY_MS_BUTTON_CLICK);
+            }
             return;
         }
     }
@@ -636,6 +664,13 @@ static void boot_rainbow_process(void) {
     restore_slot_led_after_marquee();
 }
 
+static void rf_led_ownership_process(void) {
+    if (!rgb_marquee_complete_rf_handoff()) {
+        return;
+    }
+    restore_slot_led_after_marquee();
+}
+
 /**@brief change slot
  */
 static void cycle_slot(bool dec) {
@@ -664,7 +699,7 @@ static void show_battery(void) {
     rgb_marquee_stop();
     uint32_t *led_pins = hw_get_led_array();
     // if still in the first 4s after boot, blink red while waiting for battery info
-    while (percentage_batt_lvl == 0) {
+    while (batt_lvl_in_milli_volts == 0) {
         for (int i = 0; i < RGB_LIST_NUM; i++) {
             nrf_gpio_pin_clear(led_pins[i]);
         }
@@ -1110,6 +1145,8 @@ int main(void) {
         button_press_process();
         // Finish or cancel the non-blocking startup animation.
         boot_rainbow_process();
+        // RF field callbacks own both the RGB color and the active-slot mask.
+        rf_led_ownership_process();
 
 #if defined(PROJECT_CHAMELEON_ULTRA)
         // Field generator rainbow animation
