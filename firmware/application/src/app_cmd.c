@@ -960,6 +960,14 @@ static data_frame_tx_t *cmd_processor_set_active_slot(uint16_t cmd, uint16_t sta
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 
+static data_frame_tx_t *cmd_processor_swap_slots(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length != 2 || data[0] >= TAG_MAX_SLOT_NUM || data[1] >= TAG_MAX_SLOT_NUM) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    status = tag_emulation_swap_slots(data[0], data[1]) ? STATUS_SUCCESS : STATUS_FLASH_WRITE_FAIL;
+    return data_frame_make(cmd, status, 0, NULL);
+}
+
 static data_frame_tx_t *cmd_processor_set_slot_tag_type(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     typedef struct {
         uint8_t num_slot;
@@ -3060,6 +3068,7 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_CHANGE_DEVICE_MODE,           NULL,                        cmd_processor_change_device_mode,            NULL                   },
     {    DATA_CMD_GET_DEVICE_MODE,              NULL,                        cmd_processor_get_device_mode,               NULL                   },
     {    DATA_CMD_SET_ACTIVE_SLOT,              NULL,                        cmd_processor_set_active_slot,               NULL                   },
+    {    DATA_CMD_SWAP_SLOTS,                   NULL,                        cmd_processor_swap_slots,                    NULL                   },
     {    DATA_CMD_SET_SLOT_TAG_TYPE,            NULL,                        cmd_processor_set_slot_tag_type,             NULL                   },
     {    DATA_CMD_SET_SLOT_DATA_DEFAULT,        NULL,                        cmd_processor_set_slot_data_default,         NULL                   },
     {    DATA_CMD_SET_SLOT_ENABLE,              NULL,                        cmd_processor_set_slot_enable,               NULL                   },
