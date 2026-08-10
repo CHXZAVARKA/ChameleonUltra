@@ -100,15 +100,23 @@ assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);" in hf_lost
 assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);" in lf_lost
 assert "light_up_by_slot();" in hf_detect
 assert "light_up_by_slot();" in lf_detect
-assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);" in extract_function(
+hf_disable = extract_function(
     HF_TAG,
     "void nfc_tag_14a_sense_switch",
     "bool is_valid_uid_size",
 )
-assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);" in extract_function(
+assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);" in hf_disable
+assert hf_disable.index("nrfx_nfct_uninit();") < hf_disable.index(
+    "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);"
+)
+lf_disable = extract_function(
     LF_TAG,
     "static void lf_sense_disable",
     "static enum",
+)
+assert "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);" in lf_disable
+assert lf_disable.index("nrfx_lpcomp_uninit();") < lf_disable.index(
+    "rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);"
 )
 
 assert "nrfx_pwm_stop(&pwm0_ins, false);" in RGB_MARQUEE

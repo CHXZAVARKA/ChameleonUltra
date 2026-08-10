@@ -812,11 +812,13 @@ void nfc_tag_14a_sense_switch(bool enable) {
     } else {
         if (!enable) {
             m_nfc_sense_state = NFC_SENSE_STATE_DISABLE;
-            rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);
-            g_is_tag_emulating = rgb_marquee_rf_owns_leds();
             //Directly anti -initialization NFC peripherals can turn off NFC field induction
             // SDK inside us to call us nrfx_nfct_disable
             nrfx_nfct_uninit();
+            // Release LED ownership only after NFCT can no longer publish a
+            // new FIELD_DETECTED event without a matching FIELD_LOST event.
+            rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);
+            g_is_tag_emulating = rgb_marquee_rf_owns_leds();
         }
     }
 }

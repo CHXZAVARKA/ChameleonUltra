@@ -193,12 +193,14 @@ static void lf_sense_enable(void) {
 }
 
 static void lf_sense_disable(void) {
-    rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);
-    g_is_tag_emulating = rgb_marquee_rf_owns_leds();
     nrfx_pwm_uninit(&m_broadcast);
     nrfx_lpcomp_uninit();
     m_pwm_seq = NULL;
     m_is_lf_emulating = false;
+    // Release LED ownership only after LPCOMP can no longer publish a new
+    // field-up event without a matching field-lost event.
+    rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);
+    g_is_tag_emulating = rgb_marquee_rf_owns_leds();
     sd_clock_hfclk_release();
 }
 
