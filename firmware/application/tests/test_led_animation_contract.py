@@ -6,6 +6,7 @@ from pathlib import Path
 
 SOURCE_DIR = Path(__file__).resolve().parents[1] / "src"
 APP_MAIN = (SOURCE_DIR / "app_main.c").read_text(encoding="utf-8")
+APP_CMD = (SOURCE_DIR / "app_cmd.c").read_text(encoding="utf-8")
 RGB_MARQUEE = (SOURCE_DIR / "rgb_marquee.c").read_text(encoding="utf-8")
 RFID_MAIN = (SOURCE_DIR / "rfid_main.c").read_text(encoding="utf-8")
 HF_TAG = (SOURCE_DIR / "rfid/nfctag/hf/nfc_14a.c").read_text(encoding="utf-8")
@@ -25,6 +26,7 @@ shutdown = extract_function(
 )
 assert "rgb_marquee_transition_rainbow_start();" in shutdown
 assert "shutdown_interrupted_by_activity()" in shutdown
+assert shutdown.count("shutdown_interrupted_by_activity()") >= 4
 assert "static volatile bool m_system_off_processing" in APP_MAIN
 assert "if (m_system_off_processing)" in extract_function(
     APP_MAIN,
@@ -43,6 +45,30 @@ show_battery = extract_function(
 assert "while (batt_lvl_in_milli_volts == 0)" in show_battery
 assert "if (!rgb_marquee_show_battery_level(percentage_batt_lvl))" in show_battery
 assert "rgb_marquee_show_battery_segments" in show_battery
+
+field_generator = extract_function(
+    APP_MAIN,
+    "static void field_generator_rainbow_loop",
+    "static void button_pin_handler",
+)
+assert "rgb_marquee_rf_owns_leds()" in field_generator
+assert "CRITICAL_REGION_ENTER();" in field_generator
+
+cycle_slot = extract_function(
+    APP_MAIN,
+    "static void cycle_slot",
+    "static void show_battery",
+)
+assert "apply_slot_change(slot_now, slot_new);" in cycle_slot
+assert "nrf_gpio_pin_clear" not in cycle_slot
+
+slot_enable = extract_function(
+    APP_CMD,
+    "static data_frame_tx_t *cmd_processor_set_slot_enable",
+    "static data_frame_tx_t *cmd_processor_slot_data_config_save",
+)
+assert "if (!rgb_marquee_rf_owns_leds()" in slot_enable
+assert "CRITICAL_REGION_ENTER();" in slot_enable
 
 hf_detect = extract_function(
     HF_TAG,

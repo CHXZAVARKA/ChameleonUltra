@@ -75,6 +75,7 @@ static bool m_boot_rainbow_requires_usb = false;
 extern bool g_is_low_battery_shutdown;
 
 static void rf_led_ownership_process(void);
+static void restore_slot_led_after_marquee(void);
 
 static void boot_rainbow_start(bool requires_usb) {
     m_boot_rainbow_requires_usb = requires_usb;
@@ -165,7 +166,9 @@ static void field_generator_rainbow_loop(void) {
     static uint8_t color_index = 0;
     static uint32_t last_update = 0;
 
-    if (!m_is_field_on) return;
+    if (!m_is_field_on ||
+            rgb_marquee_rf_owns_leds() ||
+            rgb_marquee_rf_ownership_pending()) return;
 
     uint32_t now = app_timer_cnt_get();
 
@@ -177,15 +180,23 @@ static void field_generator_rainbow_loop(void) {
     // Rainbow colors
     const uint8_t colors[] = {RGB_RED, RGB_YELLOW, RGB_GREEN, RGB_CYAN, RGB_BLUE, RGB_MAGENTA};
 
-    set_slot_light_color(colors[color_index]);
-    uint32_t *led_pins = hw_get_led_array();
+    bool advanced = false;
+    CRITICAL_REGION_ENTER();
+    if (!rgb_marquee_rf_owns_leds() && !rgb_marquee_rf_ownership_pending()) {
+        set_slot_light_color(colors[color_index]);
+        uint32_t *led_pins = hw_get_led_array();
 
-    // Light up all LEDs with current color
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        nrf_gpio_pin_set(led_pins[i]);
+        // Light up all LEDs with current color
+        for (int i = 0; i < RGB_LIST_NUM; i++) {
+            nrf_gpio_pin_set(led_pins[i]);
+        }
+        advanced = true;
     }
+    CRITICAL_REGION_EXIT();
 
-    color_index = (color_index + 1) % 6;
+    if (advanced) {
+        color_index = (color_index + 1) % 6;
+    }
 }
 #endif
 
@@ -315,6 +326,7 @@ static bool shutdown_interrupted_by_activity(void) {
 
 static void system_off_enter(void) {
     ret_code_t ret;
+    uint32_t *p_led_array = hw_get_led_array();
     m_system_off_processing = true;
     // Save tag data
     tag_emulation_save();
@@ -322,19 +334,42 @@ static void system_off_enter(void) {
     if (g_is_low_battery_shutdown) {
         // Don't create too complex animations, just blink LED1 three times.
         rgb_marquee_stop();
-        set_slot_light_color(RGB_RED);
         for (uint8_t i = 0; i <= 3; i++) {
-            nrf_gpio_pin_set(LED_1);
+            bool interrupted;
+            CRITICAL_REGION_ENTER();
+            interrupted = shutdown_interrupted_by_activity();
+            if (!interrupted) {
+                set_slot_light_color(RGB_RED);
+                nrf_gpio_pin_set(LED_1);
+            }
+            CRITICAL_REGION_EXIT();
+            if (interrupted) {
+                break;
+            }
             bsp_delay_ms(100);
-            nrf_gpio_pin_clear(LED_1);
+
+            CRITICAL_REGION_ENTER();
+            interrupted = shutdown_interrupted_by_activity();
+            if (!interrupted) {
+                nrf_gpio_pin_clear(LED_1);
+            }
+            CRITICAL_REGION_EXIT();
+            if (interrupted) {
+                break;
+            }
             bsp_delay_ms(100);
         }
     } else {
         // close all led.
-        uint32_t *p_led_array = hw_get_led_array();
-        for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-            nrf_gpio_pin_clear(p_led_array[i]);
+        bool ready;
+        CRITICAL_REGION_ENTER();
+        ready = !shutdown_interrupted_by_activity();
+        if (ready) {
+            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+                nrf_gpio_pin_clear(p_led_array[i]);
+            }
         }
+        CRITICAL_REGION_EXIT();
         // Power off animation
         uint8_t animation_config = settings_get_animation_config();
         uint8_t slot = tag_emulation_get_slot();
@@ -347,7 +382,9 @@ static void system_off_enter(void) {
                 color = 2;
             }
         }
-        if (animation_config == SettingsAnimationModeFull) {
+        if (!ready) {
+            // Cancellation is handled by the shared gate below.
+        } else if (animation_config == SettingsAnimationModeFull) {
             rgb_marquee_transition_rainbow_start();
             while (rgb_marquee_transition_rainbow_is_active()) {
                 bool interrupted;
@@ -368,23 +405,18 @@ static void system_off_enter(void) {
         } else if (animation_config == SettingsAnimationModeSymmetric) {
             if (m_system_off_processing) rgb_marquee_symmetric_in(color, slot);
         }
-        rgb_marquee_stop();
-        shutdown_interrupted_by_activity();
-        if (!m_system_off_processing) {
-            rgb_marquee_complete_rf_handoff();
-            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-                nrf_gpio_pin_clear(p_led_array[i]);
-            }
-            if (!g_is_tag_emulating) {
-                set_slot_light_color(get_color_by_slot(tag_emulation_get_slot()));
-            }
-            light_up_by_slot();
-            if (!g_is_tag_emulating &&
-                    nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
-                sleep_timer_start(SLEEP_DELAY_MS_BUTTON_CLICK);
-            }
-            return;
+    }
+
+    rgb_marquee_stop();
+    shutdown_interrupted_by_activity();
+    if (!m_system_off_processing) {
+        rgb_marquee_complete_rf_handoff();
+        restore_slot_led_after_marquee();
+        if (!g_is_tag_emulating &&
+                nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
+            sleep_timer_start(SLEEP_DELAY_MS_BUTTON_CLICK);
         }
+        return;
     }
 
     // Disable the HF NFC event first
@@ -698,12 +730,6 @@ static void cycle_slot(bool dec) {
     }
     // Update status only if the new card slot switch is valid
     tag_emulation_change_slot(slot_new, true); // Tell the analog card module that we need to switch card slots
-    // Turn off the LEDs in case we were showing the battery status
-    rgb_marquee_stop();
-    uint32_t *led_pins = hw_get_led_array();
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        nrf_gpio_pin_clear(led_pins[i]);
-    }
     // Go back to the color corresponding to the field enablement type
     apply_slot_change(slot_now, slot_new);
 }
@@ -996,12 +1022,17 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
                 m_is_field_on = true;
                 NRF_LOG_INFO("NFC field ON");
 
-                // Set initial rainbow state
-                set_slot_light_color(RGB_RED);
-                uint32_t *led_pins = hw_get_led_array();
-                for (int i = 0; i < RGB_LIST_NUM; i++) {
-                    nrf_gpio_pin_set(led_pins[i]);
+                // Set initial rainbow state only when tag emulation does not
+                // currently own the shared RGB and slot LEDs.
+                CRITICAL_REGION_ENTER();
+                if (!rgb_marquee_rf_owns_leds() && !rgb_marquee_rf_ownership_pending()) {
+                    set_slot_light_color(RGB_RED);
+                    uint32_t *led_pins = hw_get_led_array();
+                    for (int i = 0; i < RGB_LIST_NUM; i++) {
+                        nrf_gpio_pin_set(led_pins[i]);
+                    }
                 }
+                CRITICAL_REGION_EXIT();
 
                 // Stop sleep timer while field is active
                 NRF_LOG_INFO("Stopping sleep timer for field generator");
@@ -1020,8 +1051,8 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
                     nrf_gpio_pin_set(HF_ANT_SEL);       // hf ant switch back to tag mode
                 }
 
-                // Restore normal LED
-                light_up_by_slot();
+                // Restore either the active RF owner or the normal slot LED.
+                restore_slot_led_after_marquee();
 
                 // Restart sleep timer
                 NRF_LOG_INFO("Field off, restarting sleep timer");

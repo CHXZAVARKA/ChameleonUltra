@@ -3,6 +3,7 @@
 #include "bsp_delay.h"
 #include "usb_main.h"
 #include "rfid_main.h"
+#include "rgb_marquee.h"
 #include "ble_main.h"
 #include "syssleep.h"
 #include "hex_utils.h"
@@ -1053,7 +1054,11 @@ static data_frame_tx_t *cmd_processor_set_slot_enable(uint16_t cmd, uint16_t sta
         uint8_t slot_prev = tag_emulation_slot_find_next(slot_now);
         NRF_LOG_INFO("slot_now = %d, slot_prev = %d", slot_now, slot_prev);
         if (slot_prev == slot_now) {
-            set_slot_light_color(RGB_MAGENTA);
+            CRITICAL_REGION_ENTER();
+            if (!rgb_marquee_rf_owns_leds() && !rgb_marquee_rf_ownership_pending()) {
+                set_slot_light_color(RGB_MAGENTA);
+            }
+            CRITICAL_REGION_EXIT();
         } else {
             change_slot_auto(slot_prev);
         }
