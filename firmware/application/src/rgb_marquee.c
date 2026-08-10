@@ -18,11 +18,14 @@ NRF_LOG_MODULE_REGISTER();
 #define PWM_MAX 1000 // PWM Maximum
 #define LIGHT_LEVEL_MAX 99 // The maximum value of brightness level
 #define RAINBOW_FRAME_COUNT 96U
-#define RAINBOW_BOOT_BRIGHTNESS 180U
+#define RAINBOW_TRANSITION_BRIGHTNESS 180U
 #define RAINBOW_CHARGING_BRIGHTNESS 115U
-#define RAINBOW_BOOT_FRAME_REPEATS 5U
+#define RAINBOW_TRANSITION_FRAME_REPEATS 5U
 #define RAINBOW_CHARGING_FRAME_REPEATS 20U
-#define RAINBOW_BOOT_TIMEOUT_MS 750U
+#define RAINBOW_TRANSITION_TIMEOUT_MS 750U
+#define RAINBOW_TRANSITION_DOT_STEP_MS 40U
+#define RAINBOW_CHARGING_DOT_STEP_MS 80U
+#define BATTERY_LEVEL_BRIGHTNESS 180U
 static nrf_drv_pwm_t pwm0_ins = NRF_DRV_PWM_INSTANCE(1);
 nrf_pwm_values_individual_t pwm_sequ_val; // PWM control 4 channels in the independent mode
 nrf_pwm_sequence_t const seq = { //Configure the structure of PWM output
@@ -40,12 +43,14 @@ nrf_drv_pwm_config_t pwm_config = {//PWM configuration structure
     .step_mode = NRF_PWM_STEP_AUTO
 };
 static autotimer *timer;
+static autotimer *rainbow_dot_timer;
 static bool pwm_initialized = false;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_values_individual_t rainbow_pwm_values[RAINBOW_FRAME_COUNT];
-static volatile bool rainbow_boot_active = false;
+static volatile bool rainbow_transition_active = false;
 static volatile bool rainbow_playback_finished = false;
+static uint32_t rainbow_dot_step = 0;
 extern bool g_usb_led_marquee_enable;
 
 static void rgb_pwm_uninit(void) {
@@ -63,10 +68,10 @@ static void rgb_pwm_init(nrf_drv_pwm_handler_t handler) {
     pwm_initialized = true;
 }
 
-static nrf_pwm_sequence_t const rainbow_boot_seq = {
+static nrf_pwm_sequence_t const rainbow_transition_seq = {
     .values.p_individual = rainbow_pwm_values,
     .length = NRF_PWM_VALUES_LENGTH(rainbow_pwm_values),
-    .repeats = RAINBOW_BOOT_FRAME_REPEATS,
+    .repeats = RAINBOW_TRANSITION_FRAME_REPEATS,
     .end_delay = 0,
 };
 
@@ -78,7 +83,7 @@ static nrf_pwm_sequence_t const rainbow_charging_seq = {
 };
 
 static void rainbow_pwm_callback(nrfx_pwm_evt_type_t event_type) {
-    if (rainbow_boot_active && event_type == NRF_DRV_PWM_EVT_FINISHED) {
+    if (rainbow_transition_active && event_type == NRF_DRV_PWM_EVT_FINISHED) {
         rainbow_playback_finished = true;
     }
 }
@@ -94,13 +99,6 @@ static void rainbow_fill_sequence(uint8_t brightness) {
     }
 }
 
-static void rainbow_light_all_slots(void) {
-    uint32_t *led_array = hw_get_led_array();
-    for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-        nrf_gpio_pin_set(led_array[i]);
-    }
-}
-
 static void rgb_clear_all_slots(void) {
     uint32_t *led_array = hw_get_led_array();
     for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
@@ -108,26 +106,47 @@ static void rgb_clear_all_slots(void) {
     }
 }
 
+static void rainbow_light_dot(uint8_t position) {
+    uint32_t *led_array = hw_get_led_array();
+    rgb_clear_all_slots();
+    for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+        if (i == position) {
+            nrf_gpio_pin_set(led_array[i]);
+        }
+    }
+}
+
+static void rainbow_advance_dot(uint32_t interval_ms) {
+    if (rainbow_dot_timer->time < interval_ms) {
+        return;
+    }
+    bsp_set_timer(rainbow_dot_timer, 0);
+    rainbow_dot_step++;
+    rainbow_light_dot(led_bounce_position(rainbow_dot_step, RGB_LIST_NUM));
+}
+
 static void rainbow_pwm_start(
     uint8_t brightness,
     nrf_pwm_sequence_t const *sequence,
     uint32_t flags,
-    bool boot_animation
+    bool transition_animation
 ) {
     // EasyDMA owns the sequence buffer while PWM is active. Always release it
     // before updating the shared rainbow frames.
     rgb_marquee_stop();
     rainbow_fill_sequence(brightness);
-    rainbow_light_all_slots();
+    rainbow_light_dot(0);
+    rainbow_dot_step = 0;
+    bsp_set_timer(rainbow_dot_timer, 0);
 
     pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
     pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
     pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
     pwm_config.output_pins[3] = NRF_DRV_PWM_PIN_NOT_USED;
 
-    rainbow_boot_active = boot_animation;
+    rainbow_transition_active = transition_animation;
     rainbow_playback_finished = false;
-    if (boot_animation) {
+    if (transition_animation) {
         bsp_set_timer(timer, 0);
     }
     rgb_pwm_init(rainbow_pwm_callback);
@@ -137,6 +156,7 @@ static void rainbow_pwm_start(
 
 void rgb_marquee_init(void) {
     timer = bsp_obtain_timer(0);
+    rainbow_dot_timer = bsp_obtain_timer(0);
 }
 
 void rgb_marquee_stop(void) {
@@ -146,28 +166,30 @@ void rgb_marquee_stop(void) {
     }
     rgb_marquee_usb_idle_step = 0;
     rgb_marquee_usb_open_step = 0;
-    rainbow_boot_active = false;
+    rainbow_transition_active = false;
     rainbow_playback_finished = false;
+    rainbow_dot_step = 0;
 }
 
-void rgb_marquee_boot_rainbow(void) {
+void rgb_marquee_transition_rainbow_start(void) {
     rainbow_pwm_start(
-        RAINBOW_BOOT_BRIGHTNESS,
-        &rainbow_boot_seq,
+        RAINBOW_TRANSITION_BRIGHTNESS,
+        &rainbow_transition_seq,
         NRF_DRV_PWM_FLAG_STOP,
         true
     );
 }
 
-bool rgb_marquee_boot_rainbow_is_active(void) {
-    return rainbow_boot_active;
+bool rgb_marquee_transition_rainbow_is_active(void) {
+    return rainbow_transition_active;
 }
 
-bool rgb_marquee_boot_rainbow_poll(void) {
-    if (!rainbow_boot_active) {
+bool rgb_marquee_transition_rainbow_poll(void) {
+    if (!rainbow_transition_active) {
         return false;
     }
-    if (!rainbow_playback_finished && NO_TIMEOUT_1MS(timer, RAINBOW_BOOT_TIMEOUT_MS)) {
+    rainbow_advance_dot(RAINBOW_TRANSITION_DOT_STEP_MS);
+    if (!rainbow_playback_finished && NO_TIMEOUT_1MS(timer, RAINBOW_TRANSITION_TIMEOUT_MS)) {
         return false;
     }
     rgb_marquee_stop();
@@ -571,7 +593,29 @@ void rgb_marquee_usb_idle(void) {
             false
         );
         rgb_marquee_usb_idle_step = 1;
+        return;
     }
+    rainbow_advance_dot(RAINBOW_CHARGING_DOT_STEP_MS);
+}
+
+void rgb_marquee_show_battery_level(uint8_t percentage) {
+    rainbow_rgb_t color = battery_level_color(
+        percentage,
+        BATTERY_LEVEL_BRIGHTNESS
+    );
+
+    rgb_marquee_stop();
+    rgb_clear_all_slots();
+    pwm_sequ_val.channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
+    pwm_sequ_val.channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
+    pwm_sequ_val.channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
+    pwm_sequ_val.channel_3 = PWM_MAX;
+    pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    pwm_config.output_pins[3] = NRF_DRV_PWM_PIN_NOT_USED;
+    rgb_pwm_init(NULL);
+    nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
 }
 
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot) {

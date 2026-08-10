@@ -13,6 +13,8 @@ typedef struct {
 } rainbow_rgb_t;
 
 rainbow_rgb_t rainbow_color_at(uint16_t phase, uint8_t brightness);
+rainbow_rgb_t battery_level_color(uint8_t percentage, uint8_t brightness);
+uint8_t led_bounce_position(uint32_t step, uint8_t position_count);
 uint16_t rainbow_pwm_compare(uint8_t intensity, uint16_t pwm_top);
 
 #endif

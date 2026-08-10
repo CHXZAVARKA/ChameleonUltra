@@ -76,7 +76,7 @@ extern bool g_is_low_battery_shutdown;
 
 static void boot_rainbow_start(bool requires_usb) {
     m_boot_rainbow_requires_usb = requires_usb;
-    rgb_marquee_boot_rainbow();
+    rgb_marquee_transition_rainbow_start();
 }
 
 
@@ -326,11 +326,14 @@ static void system_off_enter(void) {
             }
         }
         if (animation_config == SettingsAnimationModeFull) {
-            if (m_system_off_processing) rgb_marquee_sweep_from_to(color, slot, dir ? 7 : 0);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, dir, 7, 99, 75);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, !dir, 7, 75, 50);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, dir, 7, 50, 25);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, !dir, 7, 25, 0);
+            rgb_marquee_transition_rainbow_start();
+            while (m_system_off_processing &&
+                   rgb_marquee_transition_rainbow_is_active()) {
+                if (rgb_marquee_transition_rainbow_poll()) {
+                    break;
+                }
+                bsp_delay_ms(5);
+            }
         } else if (animation_config == SettingsAnimationModeMinimal) {
             if (m_system_off_processing) rgb_marquee_sweep_from_to(color, slot, !dir ? 7 : 0);
         } else if (animation_config == SettingsAnimationModeSymmetric) {
@@ -594,7 +597,7 @@ static void restore_slot_led_after_marquee(void) {
 }
 
 static void boot_rainbow_process(void) {
-    if (!rgb_marquee_boot_rainbow_is_active()) {
+    if (!rgb_marquee_transition_rainbow_is_active()) {
         m_boot_rainbow_requires_usb = false;
         return;
     }
@@ -609,8 +612,24 @@ static void boot_rainbow_process(void) {
                nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
         rgb_marquee_stop();
         m_boot_rainbow_requires_usb = false;
-    } else if (!rgb_marquee_boot_rainbow_poll()) {
-        return;
+    } else {
+        bool field_started;
+        bool finished = false;
+        CRITICAL_REGION_ENTER();
+        field_started = g_is_tag_emulating;
+        if (!field_started) {
+            finished = rgb_marquee_transition_rainbow_poll();
+        }
+        CRITICAL_REGION_EXIT();
+        if (field_started) {
+            rgb_marquee_stop();
+            m_boot_rainbow_requires_usb = false;
+            restore_slot_led_after_marquee();
+            return;
+        }
+        if (!finished) {
+            return;
+        }
     }
 
     m_boot_rainbow_requires_usb = false;
@@ -656,11 +675,12 @@ static void show_battery(void) {
         }
         bsp_delay_ms(100);
     }
-    // ok we have data, show level with cyan LEDs
+    // We have data. Keep the bar length, but encode the percentage in color:
+    // red at empty, yellow at half, and green at full.
     for (int i = 0; i < RGB_LIST_NUM; i++) {
         nrf_gpio_pin_clear(led_pins[i]);
     }
-    set_slot_light_color(RGB_CYAN);
+    rgb_marquee_show_battery_level(percentage_batt_lvl);
     uint8_t nleds = (percentage_batt_lvl * 2) / 25; // 0->7 (8 for 100% but this is ignored)
     for (int i = 0; i < RGB_LIST_NUM; i++) {
         if (i <= nleds) {
@@ -1097,7 +1117,7 @@ int main(void) {
 #endif
 
         // Led blink at usb status (only if field generator is off)
-        if (!m_is_field_on && !rgb_marquee_boot_rainbow_is_active()) {
+        if (!m_is_field_on && !rgb_marquee_transition_rainbow_is_active()) {
             blink_usb_led_status();
         }
 

@@ -2,8 +2,39 @@
 
 #define PWM_POLARITY_FALLING 0x8000U
 
-static uint8_t scale_channel(uint8_t channel, uint8_t brightness) {
-    return (uint8_t)(((uint16_t)channel * brightness + 127U) / 255U);
+static uint16_t integer_sqrt(uint32_t value) {
+    uint32_t original = value;
+    uint32_t result = 0U;
+    uint32_t bit = 1UL << 30U;
+
+    while (bit > value) {
+        bit >>= 2U;
+    }
+    while (bit != 0U) {
+        if (value >= result + bit) {
+            value -= result + bit;
+            result = (result >> 1U) + bit;
+        } else {
+            result >>= 1U;
+        }
+        bit >>= 2U;
+    }
+    uint32_t lower_error = original - result * result;
+    uint32_t upper = result + 1U;
+    uint32_t upper_error = upper * upper - original;
+    return (uint16_t)(upper_error < lower_error ? upper : result);
+}
+
+static uint8_t normalize_channel(
+    uint8_t channel,
+    uint8_t brightness,
+    uint16_t magnitude
+) {
+    if (channel == 0U || magnitude == 0U) {
+        return 0U;
+    }
+    return (uint8_t)(((uint32_t)channel * brightness + magnitude / 2U) /
+                     magnitude);
 }
 
 rainbow_rgb_t rainbow_color_at(uint16_t phase, uint8_t brightness) {
@@ -41,10 +72,39 @@ rainbow_rgb_t rainbow_color_at(uint16_t phase, uint8_t brightness) {
             break;
     }
 
-    color.red = scale_channel(color.red, brightness);
-    color.green = scale_channel(color.green, brightness);
-    color.blue = scale_channel(color.blue, brightness);
+    uint32_t energy = (uint32_t)color.red * color.red +
+                      (uint32_t)color.green * color.green +
+                      (uint32_t)color.blue * color.blue;
+    uint16_t magnitude = integer_sqrt(energy);
+    color.red = normalize_channel(color.red, brightness, magnitude);
+    color.green = normalize_channel(color.green, brightness, magnitude);
+    color.blue = normalize_channel(color.blue, brightness, magnitude);
     return color;
+}
+
+rainbow_rgb_t battery_level_color(uint8_t percentage, uint8_t brightness) {
+    uint8_t clamped = percentage > 100U ? 100U : percentage;
+    rainbow_rgb_t color = {0U, 0U, 0U};
+
+    if (clamped <= 50U) {
+        color.red = brightness;
+        color.green = (uint8_t)(((uint16_t)brightness * clamped + 25U) / 50U);
+    } else {
+        color.red = (uint8_t)(((uint16_t)brightness * (100U - clamped) + 25U) /
+                              50U);
+        color.green = brightness;
+    }
+    return color;
+}
+
+uint8_t led_bounce_position(uint32_t step, uint8_t position_count) {
+    if (position_count < 2U) {
+        return 0U;
+    }
+    uint8_t last = (uint8_t)(position_count - 1U);
+    uint8_t period = (uint8_t)(last * 2U);
+    uint8_t offset = (uint8_t)(step % period);
+    return offset <= last ? offset : (uint8_t)(period - offset);
 }
 
 uint16_t rainbow_pwm_compare(uint8_t intensity, uint16_t pwm_top) {
