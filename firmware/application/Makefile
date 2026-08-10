@@ -27,6 +27,7 @@ SRC_FILES += \
   $(PROJ_DIR)/rfid/nfctag/tag_emulation.c \
   $(PROJ_DIR)/rfid/nfctag/tag_persistence.c \
   $(PROJ_DIR)/rfid/nfctag/slot_reorder.c \
+  $(PROJ_DIR)/rfid/nfctag/slot_reorder_protocol.c \
   $(PROJ_DIR)/rfid/nfctag/hf/crypto1_helper.c \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_14a.c \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_14a_4.c \

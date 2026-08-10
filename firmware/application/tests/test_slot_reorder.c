@@ -4,7 +4,10 @@
 #include <string.h>
 
 #include "data_cmd.h"
+#include "app_status.h"
 #include "slot_reorder.h"
+#include "slot_reorder_protocol.h"
+#include "tag_persistence.h"
 
 typedef struct {
     bool result;
@@ -12,10 +15,31 @@ typedef struct {
     tag_slot_config_t saved;
 } commit_spy_t;
 
+typedef struct {
+    bool result;
+    int calls;
+    uint8_t source;
+    uint8_t target;
+} swap_spy_t;
+
+static tag_slot_config_t persistence_config;
+
+uint8_t tag_emulation_get_storage_slot(uint8_t slot) {
+    return tag_slot_config_storage_slot(&persistence_config, slot);
+}
+
 static bool commit_spy(const tag_slot_config_t *config, void *context) {
     commit_spy_t *spy = context;
     spy->calls++;
     spy->saved = *config;
+    return spy->result;
+}
+
+static bool swap_spy(uint8_t source, uint8_t target, void *context) {
+    swap_spy_t *spy = context;
+    spy->calls++;
+    spy->source = source;
+    spy->target = target;
     return spy->result;
 }
 
@@ -132,6 +156,90 @@ static void test_persistence_failure_rolls_back_runtime_and_active_slot(void) {
     assert(memcmp(&live, &before, sizeof(live)) == 0);
 }
 
+static void assert_record_map(uint8_t logical_slot, tag_sense_type_t sense_type,
+                              uint16_t dump_id, uint16_t nickname_id) {
+    fds_slot_record_map_t dump_map;
+    fds_slot_record_map_t nickname_map;
+    get_fds_map_by_slot_sense_type_for_dump(logical_slot, sense_type, &dump_map);
+    get_fds_map_by_slot_sense_type_for_nick(logical_slot, sense_type, &nickname_map);
+    assert(dump_map.id == dump_id);
+    assert(nickname_map.id == nickname_id);
+    assert(dump_map.key == (uint16_t)sense_type);
+    assert(nickname_map.key == (uint16_t)sense_type);
+}
+
+static void test_real_persistence_mapping_moves_whole_hf_lf_bundle(void) {
+    persistence_config = make_config(1);
+    persistence_config.slots[1].tag_hf = TAG_TYPE_SEOS;
+    persistence_config.slots[1].tag_lf = TAG_TYPE_IDTECK;
+    persistence_config.slots[6].tag_hf = TAG_TYPE_NTAG_216;
+    persistence_config.slots[6].tag_lf = TAG_TYPE_EM410X;
+    commit_spy_t spy = {.result = true};
+
+    assert_record_map(1, TAG_SENSE_HF, 0x1101, 0x1201);
+    assert_record_map(1, TAG_SENSE_LF, 0x1101, 0x1201);
+    assert_record_map(6, TAG_SENSE_HF, 0x1106, 0x1206);
+    assert_record_map(6, TAG_SENSE_LF, 0x1106, 0x1206);
+
+    assert(tag_slot_config_swap_transaction(&persistence_config, 1, 6, commit_spy, &spy));
+
+    assert_record_map(1, TAG_SENSE_HF, 0x1106, 0x1206);
+    assert_record_map(1, TAG_SENSE_LF, 0x1106, 0x1206);
+    assert_record_map(6, TAG_SENSE_HF, 0x1101, 0x1201);
+    assert_record_map(6, TAG_SENSE_LF, 0x1101, 0x1201);
+    assert(persistence_config.slots[1].tag_hf == TAG_TYPE_NTAG_216);
+    assert(persistence_config.slots[1].tag_lf == TAG_TYPE_EM410X);
+    assert(persistence_config.slots[6].tag_hf == TAG_TYPE_SEOS);
+    assert(persistence_config.slots[6].tag_lf == TAG_TYPE_IDTECK);
+}
+
+static void test_protocol_command_1041_success_and_callback(void) {
+    uint8_t payload[] = {0, TAG_MAX_SLOT_NUM - 1};
+    swap_spy_t spy = {.result = true};
+
+    tag_slot_swap_protocol_response_t response = tag_slot_swap_protocol_process(
+        DATA_CMD_SWAP_SLOTS, sizeof(payload), payload, swap_spy, &spy);
+
+    assert(response.command == 1041);
+    assert(response.status == STATUS_SUCCESS);
+    assert(spy.calls == 1);
+    assert(spy.source == 0);
+    assert(spy.target == TAG_MAX_SLOT_NUM - 1);
+}
+
+static void test_protocol_rejects_invalid_lengths_and_indices(void) {
+    uint8_t payload[] = {1, 6, 7};
+    swap_spy_t spy = {.result = true};
+    static const uint16_t invalid_lengths[] = {0, 1, 3};
+
+    for (size_t i = 0; i < sizeof(invalid_lengths) / sizeof(invalid_lengths[0]); i++) {
+        tag_slot_swap_protocol_response_t response = tag_slot_swap_protocol_process(
+            DATA_CMD_SWAP_SLOTS, invalid_lengths[i], payload, swap_spy, &spy);
+        assert(response.status == STATUS_PAR_ERR);
+    }
+
+    payload[0] = TAG_MAX_SLOT_NUM;
+    assert(tag_slot_swap_protocol_process(DATA_CMD_SWAP_SLOTS, 2, payload, swap_spy, &spy).status == STATUS_PAR_ERR);
+    payload[0] = 1;
+    payload[1] = TAG_MAX_SLOT_NUM;
+    assert(tag_slot_swap_protocol_process(DATA_CMD_SWAP_SLOTS, 2, payload, swap_spy, &spy).status == STATUS_PAR_ERR);
+    assert(tag_slot_swap_protocol_process(DATA_CMD_SWAP_SLOTS, 2, NULL, swap_spy, &spy).status == STATUS_PAR_ERR);
+    assert(spy.calls == 0);
+}
+
+static void test_protocol_reports_flash_failure(void) {
+    uint8_t payload[] = {2, 5};
+    swap_spy_t spy = {.result = false};
+
+    tag_slot_swap_protocol_response_t response = tag_slot_swap_protocol_process(
+        DATA_CMD_SWAP_SLOTS, sizeof(payload), payload, swap_spy, &spy);
+
+    assert(response.status == STATUS_FLASH_WRITE_FAIL);
+    assert(spy.calls == 1);
+    assert(spy.source == 2);
+    assert(spy.target == 5);
+}
+
 int main(void) {
     _Static_assert(DATA_CMD_SWAP_SLOTS == 1041, "slot swap protocol command changed");
     test_complete_bundle_and_source_active_follow_swap();
@@ -142,5 +250,9 @@ int main(void) {
     test_same_slot_is_noop_without_persistence();
     test_invalid_slots_change_nothing();
     test_persistence_failure_rolls_back_runtime_and_active_slot();
+    test_real_persistence_mapping_moves_whole_hf_lf_bundle();
+    test_protocol_command_1041_success_and_callback();
+    test_protocol_rejects_invalid_lengths_and_indices();
+    test_protocol_reports_flash_failure();
     return 0;
 }
