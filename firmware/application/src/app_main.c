@@ -67,11 +67,17 @@ volatile bool m_is_field_on = false;
 // cpu reset reason
 static uint32_t m_reset_source;
 static uint32_t m_gpregret_val;
+static bool m_boot_rainbow_requires_usb = false;
 
 #define GPREGRET_CLEAR_VALUE_DEFAULT (0xFFFFFFFFUL)
 #define RESET_ON_LF_FIELD_EXISTS_Msk (1UL)
 
 extern bool g_is_low_battery_shutdown;
+
+static void boot_rainbow_start(bool requires_usb) {
+    m_boot_rainbow_requires_usb = requires_usb;
+    rgb_marquee_boot_rainbow();
+}
 
 
 /**@brief Function for assert macro callback.
@@ -471,7 +477,7 @@ static void check_wakeup_src(void) {
         uint8_t animation_config = settings_get_animation_config();
         bool rainbow_started = false;
         if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_boot_rainbow();
+            boot_rainbow_start(false);
             rainbow_started = true;
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
@@ -520,7 +526,7 @@ static void check_wakeup_src(void) {
         NRF_LOG_INFO("WakeUp from VBUS(USB)");
 
         if (settings_get_animation_config() == SettingsAnimationModeFull) {
-            rgb_marquee_boot_rainbow();
+            boot_rainbow_start(true);
         }
 
         // USB plugged in and open communication break has its own light effect, no need to light up for the time being
@@ -544,7 +550,9 @@ static void check_wakeup_src(void) {
         uint8_t animation_config = settings_get_animation_config();
         bool rainbow_started = false;
         if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_boot_rainbow();
+            boot_rainbow_start(
+                nrfx_power_usbstatus_get() != NRFX_POWER_USB_STATE_DISCONNECTED
+            );
             rainbow_started = true;
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_from_to(0, 0, 2);
@@ -575,17 +583,27 @@ static void check_wakeup_src(void) {
 
 static void boot_rainbow_process(void) {
     if (!rgb_marquee_boot_rainbow_is_active()) {
+        m_boot_rainbow_requires_usb = false;
         return;
     }
 
     if (g_is_tag_emulating) {
         // HF/LF emulation has priority over decorative playback.
         rgb_marquee_stop();
+        m_boot_rainbow_requires_usb = false;
+        // Keep the GREEN/BLUE field color selected by the interrupt handler,
+        // but collapse the decorative all-position mask back to the active slot.
+        light_up_by_slot();
         return;
+    } else if (m_boot_rainbow_requires_usb &&
+               nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
+        rgb_marquee_stop();
+        m_boot_rainbow_requires_usb = false;
     } else if (!rgb_marquee_boot_rainbow_poll()) {
         return;
     }
 
+    m_boot_rainbow_requires_usb = false;
     uint8_t slot = tag_emulation_get_slot();
     set_slot_light_color(get_color_by_slot(slot));
     light_up_by_slot();
@@ -967,6 +985,16 @@ static void button_press_process(void) {
 }
 
 extern bool g_usb_port_opened;
+static void stop_usb_marquee(uint8_t slot_color) {
+    rgb_marquee_stop();
+    if (!g_is_tag_emulating) {
+        set_slot_light_color(slot_color);
+    }
+    // Preserve a field handler's GREEN/BLUE color while returning the
+    // decorative all-position mask to the active slot.
+    light_up_by_slot();
+}
+
 static void blink_usb_led_status(void) {
     uint8_t slot = tag_emulation_get_slot();
     uint8_t color = get_color_by_slot(slot);
@@ -974,10 +1002,8 @@ static void blink_usb_led_status(void) {
     static bool is_working = false;
     if (nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
         if (is_working) {
-            rgb_marquee_stop();
-            set_slot_light_color(color);
-            light_up_by_slot();
             is_working = false;
+            stop_usb_marquee(color);
         }
     } else {
         // The light effect is enabled and can be displayed
@@ -996,9 +1022,7 @@ static void blink_usb_led_status(void) {
         } else {
             if (is_working) {
                 is_working = false;
-                rgb_marquee_stop();
-                set_slot_light_color(color);
-                light_up_by_slot();
+                stop_usb_marquee(color);
             }
         }
     }
