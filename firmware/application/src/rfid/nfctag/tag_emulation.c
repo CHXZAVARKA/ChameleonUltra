@@ -10,6 +10,7 @@
 #include "nfc_14a_4.h"
 #include "nfc_seos.h"
 #include "rgb_marquee.h"
+#include "slot_reorder.h"
 #include "tag_persistence.h"
 
 #define NRF_LOG_MODULE_NAME tag_emu
@@ -78,6 +79,7 @@ static tag_slot_config_t slotConfig ALIGN_U32 = {
         { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 7
         { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 8
     },
+    .storage_slots = {0, 1, 2, 3, 4, 5, 6, 7},
 };
 // The card slot configuration unique CRC, once the slot configuration changes, can be checked by CRC
 static uint16_t m_slot_config_crc;
@@ -121,7 +123,7 @@ static tag_base_handler_map_t tag_base_map[] = {
 };
 
 static void tag_emulation_load_config(void);
-static void tag_emulation_save_config(void);
+static bool tag_emulation_save_config(void);
 
 /**
  * get the data loader for the specific type of tag
@@ -446,7 +448,7 @@ static void tag_emulation_migrate_slot_config_v0_to_v8(void) {
     NRF_LOG_INFO("Migrating slotConfig v0...");
     NRF_LOG_HEXDUMP_INFO(tmpbuf, sizeof(tmpbuf));
     // Populate new slotConfig struct
-    slotConfig.version = TAG_SLOT_CONFIG_CURRENT_VERSION;
+    slotConfig.version = 8;
     slotConfig.active_slot = tmpbuf[0];
     for (uint8_t i = 0; i < ARRAYLEN(slotConfig.slots); i++) {
         bool enabled = tmpbuf[4 + (i * 4)] & 1;
@@ -471,6 +473,11 @@ static void tag_emulation_migrate_slot_config_v0_to_v8(void) {
     }
 }
 
+static void tag_emulation_migrate_slot_config_v8_to_v9(void) {
+    slotConfig.version = TAG_SLOT_CONFIG_CURRENT_VERSION;
+    tag_slot_config_initialize_storage_map(&slotConfig);
+}
+
 static void tag_emulation_migrate_slot_config(void) {
     switch (slotConfig.version) {
         case 0:
@@ -482,6 +489,9 @@ static void tag_emulation_migrate_slot_config(void) {
         case 6:
         case 7:
             tag_emulation_migrate_slot_config_v0_to_v8();
+
+        case 8:
+            tag_emulation_migrate_slot_config_v8_to_v9();
 
             /*
              * Add new migration steps ABOVE THIS COMMENT
@@ -520,22 +530,38 @@ static void tag_emulation_load_config(void) {
 /**
  * Save the emulated card configuration data
  */
-static void tag_emulation_save_config(void) {
+static bool tag_emulation_save_config_value(const tag_slot_config_t *config, uint16_t *saved_crc) {
+    uint16_t new_calc_crc;
+    calc_14a_crc_lut((uint8_t *)config, sizeof(*config), (uint8_t *)&new_calc_crc);
+    bool ret = fds_write_sync(FDS_EMULATION_CONFIG_FILE_ID, FDS_EMULATION_CONFIG_RECORD_KEY, sizeof(*config), (void *)config);
+    if (ret && saved_crc != NULL) {
+        *saved_crc = new_calc_crc;
+    }
+    return ret;
+}
+
+static bool tag_emulation_save_config(void) {
     // We are configured the card slot configuration, and we need to calculate the current card slot configuration CRC code to judge whether the data below is updated
     uint16_t new_calc_crc;
     calc_14a_crc_lut((uint8_t *)&slotConfig, sizeof(slotConfig), (uint8_t *)&new_calc_crc);
     if (new_calc_crc != m_slot_config_crc) {  // Before saving, make sure that the card slot configuration has changed
         NRF_LOG_INFO("Save tag slot config start.");
-        bool ret = fds_write_sync(FDS_EMULATION_CONFIG_FILE_ID, FDS_EMULATION_CONFIG_RECORD_KEY, sizeof(slotConfig), (uint8_t *)&slotConfig);
+        bool ret = tag_emulation_save_config_value(&slotConfig, &new_calc_crc);
         if (ret) {
             NRF_LOG_INFO("Save tag slot config success.");
             m_slot_config_crc = new_calc_crc;
         } else {
             NRF_LOG_ERROR("Save tag slot config error.");
         }
+        return ret;
     } else {
         NRF_LOG_INFO("Tag slot config no change.");
+        return true;
     }
+}
+
+static bool commit_slot_config_swap(const tag_slot_config_t *config, void *context) {
+    return tag_emulation_save_config_value(config, (uint16_t *)context);
 }
 
 /**
@@ -575,6 +601,36 @@ void tag_emulation_save(void) {
  */
 uint8_t tag_emulation_get_slot(void) {
     return slotConfig.active_slot;
+}
+
+uint8_t tag_emulation_get_storage_slot(uint8_t slot) {
+    return tag_slot_config_storage_slot(&slotConfig, slot);
+}
+
+bool tag_emulation_swap_slots(uint8_t source, uint8_t target) {
+    if (source >= TAG_MAX_SLOT_NUM || target >= TAG_MAX_SLOT_NUM) {
+        return false;
+    }
+
+    uint8_t previous_active_slot = slotConfig.active_slot;
+    uint16_t candidate_crc = m_slot_config_crc;
+    bool ret = tag_slot_config_swap_transaction(
+        &slotConfig,
+        source,
+        target,
+        commit_slot_config_swap,
+        &candidate_crc
+    );
+    if (!ret) {
+        NRF_LOG_ERROR("Swap slot config persistence failed.");
+        return false;
+    }
+
+    m_slot_config_crc = candidate_crc;
+    if (slotConfig.active_slot != previous_active_slot) {
+        rgb_marquee_reset();
+    }
+    return true;
 }
 
 /**

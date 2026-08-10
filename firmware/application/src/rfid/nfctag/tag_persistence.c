@@ -1,6 +1,7 @@
 #include "tag_persistence.h"
 
 #include "fds_ids.h"
+#include "tag_emulation.h"
 
 #define NRF_LOG_MODULE_NAME tag_persistence
 #include "nrf_log.h"
@@ -20,12 +21,12 @@ static void get_fds_map_by_slot_auto_inc_id(uint16_t id, uint8_t slot, tag_sense
  * Obtain the KEY and ID of the corresponding data in FDS according to the card slot and the field type specified in the card slot
  */
 void get_fds_map_by_slot_sense_type_for_dump(uint8_t slot, tag_sense_type_t sense_type, fds_slot_record_map_t *map) {
-    get_fds_map_by_slot_auto_inc_id(FDS_SLOT_TAG_DUMP_FILE_ID_BASE, slot, sense_type, map);
+    get_fds_map_by_slot_auto_inc_id(FDS_SLOT_TAG_DUMP_FILE_ID_BASE, tag_emulation_get_storage_slot(slot), sense_type, map);
 }
 
 /**
  * Obtain the KEY and ID of the corresponding data in FDS according to the card slot and the field type specified in the card slot
  */
 void get_fds_map_by_slot_sense_type_for_nick(uint8_t slot, tag_sense_type_t sense_type, fds_slot_record_map_t *map) {
-    get_fds_map_by_slot_auto_inc_id(FDS_SLOT_TAG_NICK_NAME_FILE_ID_BASE, slot, sense_type, map);
+    get_fds_map_by_slot_auto_inc_id(FDS_SLOT_TAG_NICK_NAME_FILE_ID_BASE, tag_emulation_get_storage_slot(slot), sense_type, map);
 }

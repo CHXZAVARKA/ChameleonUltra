@@ -45,9 +45,9 @@ typedef struct {
  * This configuration can be preserved by persistently to Flash
  * 4 bytes a word, keep in mind the entire word alignment
  */
-#define TAG_SLOT_CONFIG_CURRENT_VERSION 8
+#define TAG_SLOT_CONFIG_CURRENT_VERSION 9
 // Intended struct size, for static assert
-#define TAG_SLOT_CONFIG_CURRENT_SIZE 68
+#define TAG_SLOT_CONFIG_CURRENT_SIZE 76
 
 typedef struct {
     // Basic configuration
@@ -69,6 +69,9 @@ typedef struct {
             tag_specific_type_t tag_lf;
         };
     } slots[TAG_MAX_SLOT_NUM];
+    // Logical slots point at stable FDS records. Swapping this map moves every
+    // dump, nickname and tag-family-specific field in one config transaction.
+    uint8_t storage_slots[TAG_MAX_SLOT_NUM];
 } PACKED tag_slot_config_t;
 
 // Use the macro to check the struct size
@@ -104,6 +107,10 @@ void tag_emulation_set_slot(uint8_t index);
 uint8_t tag_emulation_get_slot(void);
 // Switch the card slot to control whether the passing parameter control is closed during the switching period to listen to
 void tag_emulation_change_slot(uint8_t index, bool sense_disable);
+// Resolve a logical slot to the stable FDS record that owns its whole bundle.
+uint8_t tag_emulation_get_storage_slot(uint8_t slot);
+// Atomically swap two complete logical slots, including their active relation.
+bool tag_emulation_swap_slots(uint8_t source, uint8_t target);
 // Get the card slot to enable the state
 bool is_slot_enabled(uint8_t slot, tag_sense_type_t sense_type);
 // Set the card slot to enable
