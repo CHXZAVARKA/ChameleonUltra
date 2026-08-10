@@ -16,6 +16,7 @@
 #include "protocols/pac.h"
 #include "protocols/viking.h"
 #include "rgb_marquee.h"
+#include "rfid_main.h"
 #include "syssleep.h"
 #include "tag_emulation.h"
 #include "tag_persistence.h"
@@ -42,14 +43,22 @@ const nrf_pwm_sequence_t *m_pwm_seq = NULL;
 
 static void lf_field_lost(void) {
     // Open the incident interruption, so that the next event can be in and out normally
-    g_is_tag_emulating = false;  // Reset the flag in the emulation
-    rgb_marquee_release_rf_ownership();
+    rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);
+    g_is_tag_emulating = rgb_marquee_rf_owns_leds();
     m_is_lf_emulating = false;
-    TAG_FIELD_LED_OFF()  // Make sure the indicator light of the LF field status
+    if (g_is_tag_emulating) {
+        set_slot_light_color(RGB_GREEN);
+        light_up_by_slot();
+        TAG_FIELD_LED_ON()
+    } else {
+        TAG_FIELD_LED_OFF()  // Make sure the indicator light of the LF field status
+    }
     // Re-arm LPCOMP so the next field appearance triggers lpcomp_event_handler.
     NRF_LPCOMP->INTENSET = LPCOMP_INTENSET_UP_Msk;
     // call sleep_timer_start *after* unsetting g_is_tag_emulating
-    sleep_timer_start(SLEEP_DELAY_MS_FIELD_125KHZ_LOST);  // Start the timer to enter the sleep
+    if (!g_is_tag_emulating) {
+        sleep_timer_start(SLEEP_DELAY_MS_FIELD_125KHZ_LOST);  // Start the timer to enter the sleep
+    }
     NRF_LOG_INFO("LF FIELD LOST");
 }
 
@@ -85,13 +94,14 @@ static void lpcomp_event_handler(nrf_lpcomp_event_t event) {
 
     // set the emulation status logo bit
     m_is_lf_emulating = true;
-    rgb_marquee_request_rf_ownership();
+    rgb_marquee_request_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);
     g_is_tag_emulating = true;
     // turn off USB light effect when emulating cards
     g_usb_led_marquee_enable = false;
 
     // LED status update
     set_slot_light_color(RGB_BLUE);
+    light_up_by_slot();
     TAG_FIELD_LED_ON()
 
     // Play a finite burst then stop — field check happens in EVT_STOPPED after
@@ -183,6 +193,8 @@ static void lf_sense_enable(void) {
 }
 
 static void lf_sense_disable(void) {
+    rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_LF);
+    g_is_tag_emulating = rgb_marquee_rf_owns_leds();
     nrfx_pwm_uninit(&m_broadcast);
     nrfx_lpcomp_uninit();
     m_pwm_seq = NULL;

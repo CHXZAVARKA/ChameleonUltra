@@ -46,8 +46,8 @@ nrf_drv_pwm_config_t pwm_config = {//PWM configuration structure
 static autotimer *timer;
 static autotimer *rainbow_dot_timer;
 static volatile bool pwm_initialized = false;
-static volatile bool rf_ownership_requested = false;
-static volatile bool rf_owns_leds = false;
+static volatile bool rf_handoff_requested = false;
+static volatile uint8_t rf_owner_mask = 0;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_values_individual_t rainbow_pwm_values[RAINBOW_FRAME_COUNT];
@@ -76,7 +76,7 @@ static void rgb_pwm_init(nrf_drv_pwm_handler_t handler) {
 }
 
 static void rgb_pwm_honor_pending_rf_request(void) {
-    if (rf_ownership_requested && pwm_initialized) {
+    if (rf_handoff_requested && pwm_initialized) {
         nrfx_pwm_stop(&pwm0_ins, false);
     }
 }
@@ -142,7 +142,7 @@ static void rainbow_advance_dot(uint32_t interval_ms, bool require_usb_enabled) 
     }
     bsp_set_timer(rainbow_dot_timer, 0);
     CRITICAL_REGION_ENTER();
-    if (!rf_owns_leds && !rf_ownership_requested &&
+    if (rf_owner_mask == 0 && !rf_handoff_requested &&
             (!require_usb_enabled || g_usb_led_marquee_enable)) {
         rainbow_dot_step++;
         rainbow_light_dot(led_bounce_position(rainbow_dot_step, RGB_LIST_NUM));
@@ -156,28 +156,34 @@ static bool rainbow_pwm_start(
     uint32_t flags,
     bool transition_animation
 ) {
-    if (rf_owns_leds || rf_ownership_requested) {
+    if (rf_owner_mask != 0 || rf_handoff_requested) {
         return false;
     }
     // EasyDMA owns the sequence buffer while PWM is active. Always release it
     // before updating the shared rainbow frames.
     rgb_marquee_stop();
     rainbow_fill_sequence(brightness);
-    rainbow_light_dot(0);
-    rainbow_dot_step = 0;
-    bsp_set_timer(rainbow_dot_timer, 0);
+    bool started = false;
+    CRITICAL_REGION_ENTER();
+    if (rf_owner_mask == 0 && !rf_handoff_requested) {
+        rainbow_light_dot(0);
+        rainbow_dot_step = 0;
+        bsp_set_timer(rainbow_dot_timer, 0);
 
-    rgb_pwm_select_shared_color_output();
+        rgb_pwm_select_shared_color_output();
 
-    rainbow_transition_active = transition_animation;
-    rainbow_playback_finished = false;
-    if (transition_animation) {
-        bsp_set_timer(timer, 0);
+        rainbow_transition_active = transition_animation;
+        rainbow_playback_finished = false;
+        if (transition_animation) {
+            bsp_set_timer(timer, 0);
+        }
+        rgb_pwm_init(rainbow_pwm_callback);
+        nrf_drv_pwm_simple_playback(&pwm0_ins, sequence, 1, flags);
+        started = true;
     }
-    rgb_pwm_init(rainbow_pwm_callback);
-    nrf_drv_pwm_simple_playback(&pwm0_ins, sequence, 1, flags);
+    CRITICAL_REGION_EXIT();
     rgb_pwm_honor_pending_rf_request();
-    return !rf_owns_leds && !rf_ownership_requested;
+    return started && rf_owner_mask == 0 && !rf_handoff_requested;
 }
 
 
@@ -606,7 +612,7 @@ void rgb_marquee_sweep_from_to(uint8_t color, uint8_t start, uint8_t stop) {
 
 // Charging animation
 void rgb_marquee_usb_idle(void) {
-    if (rf_owns_leds || rf_ownership_requested) {
+    if (rf_owner_mask != 0 || rf_handoff_requested) {
         rgb_marquee_usb_idle_step = 0;
         return;
     }
@@ -632,7 +638,7 @@ void rgb_marquee_usb_idle(void) {
 }
 
 bool rgb_marquee_show_battery_level(uint8_t percentage) {
-    if (rf_owns_leds || rf_ownership_requested) {
+    if (rf_owner_mask != 0 || rf_handoff_requested) {
         return false;
     }
     rainbow_rgb_t color = battery_level_color(
@@ -641,16 +647,41 @@ bool rgb_marquee_show_battery_level(uint8_t percentage) {
     );
 
     rgb_marquee_stop();
-    rgb_clear_all_slots();
     pwm_sequ_val.channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
     pwm_sequ_val.channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
     pwm_sequ_val.channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
     pwm_sequ_val.channel_3 = PWM_MAX;
-    rgb_pwm_select_shared_color_output();
-    rgb_pwm_init(NULL);
-    nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+    bool started = false;
+    CRITICAL_REGION_ENTER();
+    if (rf_owner_mask == 0 && !rf_handoff_requested) {
+        rgb_clear_all_slots();
+        rgb_pwm_select_shared_color_output();
+        rgb_pwm_init(NULL);
+        nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+        started = true;
+    }
+    CRITICAL_REGION_EXIT();
     rgb_pwm_honor_pending_rf_request();
-    return !rf_owns_leds && !rf_ownership_requested;
+    return started && rf_owner_mask == 0 && !rf_handoff_requested;
+}
+
+bool rgb_marquee_show_battery_segments(uint8_t count) {
+    bool shown = false;
+    CRITICAL_REGION_ENTER();
+    if (rf_owner_mask == 0 && !rf_handoff_requested) {
+        uint32_t *led_array = hw_get_led_array();
+        uint8_t bounded_count = count > RGB_LIST_NUM ? RGB_LIST_NUM : count;
+        for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+            if (i < bounded_count) {
+                nrf_gpio_pin_set(led_array[i]);
+            } else {
+                nrf_gpio_pin_clear(led_array[i]);
+            }
+        }
+        shown = true;
+    }
+    CRITICAL_REGION_EXIT();
+    return shown;
 }
 
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot) {
@@ -783,32 +814,43 @@ bool rgb_marquee_is_enabled(void) {
     return g_usb_led_marquee_enable;
 }
 
-void rgb_marquee_request_rf_ownership(void) {
-    rf_owns_leds = true;
-    rf_ownership_requested = true;
+void rgb_marquee_request_rf_ownership(rgb_marquee_rf_source_t source) {
+    CRITICAL_REGION_ENTER();
+    rf_owner_mask |= (uint8_t)source;
+    rf_handoff_requested = true;
+    CRITICAL_REGION_EXIT();
     rgb_pwm_honor_pending_rf_request();
 }
 
-void rgb_marquee_release_rf_ownership(void) {
-    rf_owns_leds = false;
-    // Main performs the final PWM cleanup and restores the active-slot LED
-    // after the field callback has released ownership.
-    rf_ownership_requested = true;
+void rgb_marquee_release_rf_ownership(rgb_marquee_rf_source_t source) {
+    CRITICAL_REGION_ENTER();
+    uint8_t previous_mask = rf_owner_mask;
+    rf_owner_mask &= (uint8_t)~source;
+    // Main performs the final PWM cleanup and restores either the remaining
+    // RF owner or the active-slot LED after the callback releases ownership.
+    if (previous_mask != rf_owner_mask) {
+        rf_handoff_requested = true;
+    }
+    CRITICAL_REGION_EXIT();
 }
 
 bool rgb_marquee_rf_owns_leds(void) {
-    return rf_owns_leds;
+    return rf_owner_mask != 0;
+}
+
+bool rgb_marquee_rf_source_owns_leds(rgb_marquee_rf_source_t source) {
+    return (rf_owner_mask & (uint8_t)source) != 0;
 }
 
 bool rgb_marquee_rf_ownership_pending(void) {
-    return rf_ownership_requested;
+    return rf_handoff_requested;
 }
 
 bool rgb_marquee_complete_rf_handoff(void) {
     bool requested;
     CRITICAL_REGION_ENTER();
-    requested = rf_ownership_requested;
-    rf_ownership_requested = false;
+    requested = rf_handoff_requested;
+    rf_handoff_requested = false;
     CRITICAL_REGION_EXIT();
     if (!requested) {
         return false;

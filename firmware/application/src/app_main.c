@@ -192,6 +192,12 @@ static void field_generator_rainbow_loop(void) {
 /**@brief Button Matrix Events
  */
 static void button_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action) {
+    // Cancel shutdown on the physical edge. Waiting for the 50 ms debounce
+    // callback can miss a press made at the end of the transition animation.
+    if (m_system_off_processing) {
+        m_system_off_processing = false;
+        return;
+    }
     device_mode_t mode = get_device_mode();
     // Allow button operations in both tag and reader mode
     if (mode == DEVICE_MODE_TAG || mode == DEVICE_MODE_READER) {
@@ -619,7 +625,11 @@ static void restore_slot_led_after_marquee(void) {
     // RF callbacks also own the RGB GPIO latch. Recheck their state atomically
     // so main never overwrites a GREEN/BLUE field indication after an IRQ.
     CRITICAL_REGION_ENTER();
-    if (!g_is_tag_emulating) {
+    if (rgb_marquee_rf_source_owns_leds(RGB_MARQUEE_RF_SOURCE_HF)) {
+        set_slot_light_color(RGB_GREEN);
+    } else if (rgb_marquee_rf_source_owns_leds(RGB_MARQUEE_RF_SOURCE_LF)) {
+        set_slot_light_color(RGB_BLUE);
+    } else {
         uint8_t slot = tag_emulation_get_slot();
         set_slot_light_color(get_color_by_slot(slot));
     }
@@ -704,49 +714,39 @@ static void show_battery(void) {
         return;
     }
     rgb_marquee_stop();
-    uint32_t *led_pins = hw_get_led_array();
     // if still in the first 4s after boot, blink red while waiting for battery info
+    if (batt_lvl_in_milli_volts == 0) {
+        if (!rgb_marquee_show_battery_level(0)) {
+            rf_led_ownership_process();
+            return;
+        }
+    }
     while (batt_lvl_in_milli_volts == 0) {
-        if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+        if (!rgb_marquee_show_battery_segments(0)) {
             rf_led_ownership_process();
             return;
         }
-        for (int i = 0; i < RGB_LIST_NUM; i++) {
-            nrf_gpio_pin_clear(led_pins[i]);
-        }
         bsp_delay_ms(100);
-        set_slot_light_color(RGB_RED);
-        for (int i = 0; i < RGB_LIST_NUM; i++) {
-            nrf_gpio_pin_set(led_pins[i]);
-        }
-        bsp_delay_ms(100);
-        if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+        if (!rgb_marquee_show_battery_segments(RGB_LIST_NUM)) {
             rf_led_ownership_process();
             return;
         }
+        bsp_delay_ms(100);
     }
     // We have data. Keep the bar length, but encode the percentage in color:
     // red at empty, yellow at half, and green at full.
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        nrf_gpio_pin_clear(led_pins[i]);
-    }
     if (!rgb_marquee_show_battery_level(percentage_batt_lvl)) {
         rf_led_ownership_process();
         return;
     }
     uint8_t nleds = (percentage_batt_lvl * 2) / 25; // 0->7 (8 for 100% but this is ignored)
     for (int i = 0; i < RGB_LIST_NUM; i++) {
-        if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
-            rf_led_ownership_process();
-            return;
-        }
         if (i <= nleds) {
-            nrf_gpio_pin_set(led_pins[i]);
-            bsp_delay_ms(50);
-            if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+            if (!rgb_marquee_show_battery_segments((uint8_t)i + 1U)) {
                 rf_led_ownership_process();
                 return;
             }
+            bsp_delay_ms(50);
         }
     }
     // nothing special to finish, we wait for sleep or slot change

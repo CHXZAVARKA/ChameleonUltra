@@ -650,11 +650,12 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
         case NRFX_NFCT_EVT_FIELD_DETECTED: {
             sleep_timer_stop();
 
-            rgb_marquee_request_rf_ownership();
+            rgb_marquee_request_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);
             g_is_tag_emulating = true;
             g_usb_led_marquee_enable = false;
 
             set_slot_light_color(RGB_GREEN);
+            light_up_by_slot();
             TAG_FIELD_LED_ON()
 
             NRF_LOG_INFO("HF FIELD DETECTED");
@@ -674,12 +675,17 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
             break;
         }
         case NRFX_NFCT_EVT_FIELD_LOST: {
-            g_is_tag_emulating = false;
-            rgb_marquee_release_rf_ownership();
-            // call sleep_timer_start *after* unsetting g_is_tag_emulating
-            sleep_timer_start(SLEEP_DELAY_MS_FIELD_NFC_LOST);
-
-            TAG_FIELD_LED_OFF()
+            rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);
+            g_is_tag_emulating = rgb_marquee_rf_owns_leds();
+            if (g_is_tag_emulating) {
+                set_slot_light_color(RGB_BLUE);
+                light_up_by_slot();
+                TAG_FIELD_LED_ON()
+            } else {
+                // call sleep_timer_start after unsetting g_is_tag_emulating
+                sleep_timer_start(SLEEP_DELAY_MS_FIELD_NFC_LOST);
+                TAG_FIELD_LED_OFF()
+            }
             m_tag_state_14a = NFC_TAG_STATE_14A_IDLE;
 
             if (reset_if_field_lost) {
@@ -806,6 +812,8 @@ void nfc_tag_14a_sense_switch(bool enable) {
     } else {
         if (!enable) {
             m_nfc_sense_state = NFC_SENSE_STATE_DISABLE;
+            rgb_marquee_release_rf_ownership(RGB_MARQUEE_RF_SOURCE_HF);
+            g_is_tag_emulating = rgb_marquee_rf_owns_leds();
             //Directly anti -initialization NFC peripherals can turn off NFC field induction
             // SDK inside us to call us nrfx_nfct_disable
             nrfx_nfct_uninit();
