@@ -22,6 +22,7 @@ NRF_LOG_MODULE_REGISTER();
 #define RAINBOW_CHARGING_BRIGHTNESS 115U
 #define RAINBOW_BOOT_FRAME_REPEATS 5U
 #define RAINBOW_CHARGING_FRAME_REPEATS 20U
+#define RAINBOW_BOOT_TIMEOUT_MS 750U
 static nrf_drv_pwm_t pwm0_ins = NRF_DRV_PWM_INSTANCE(1);
 nrf_pwm_values_individual_t pwm_sequ_val; // PWM control 4 channels in the independent mode
 nrf_pwm_sequence_t const seq = { //Configure the structure of PWM output
@@ -43,6 +44,7 @@ static bool pwm_initialized = false;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_values_individual_t rainbow_pwm_values[RAINBOW_FRAME_COUNT];
+static bool rainbow_boot_active = false;
 static volatile bool rainbow_playback_finished = false;
 extern bool g_usb_led_marquee_enable;
 
@@ -76,7 +78,7 @@ static nrf_pwm_sequence_t const rainbow_charging_seq = {
 };
 
 static void rainbow_pwm_callback(nrfx_pwm_evt_type_t event_type) {
-    if (event_type == NRF_DRV_PWM_EVT_FINISHED) {
+    if (rainbow_boot_active && event_type == NRF_DRV_PWM_EVT_FINISHED) {
         rainbow_playback_finished = true;
     }
 }
@@ -99,7 +101,15 @@ static void rainbow_light_all_slots(void) {
     }
 }
 
-static void rainbow_pwm_start(uint8_t brightness, nrf_pwm_sequence_t const *sequence, uint32_t flags) {
+static void rainbow_pwm_start(
+    uint8_t brightness,
+    nrf_pwm_sequence_t const *sequence,
+    uint32_t flags,
+    bool boot_animation
+) {
+    // EasyDMA owns the sequence buffer while PWM is active. Always release it
+    // before updating the shared rainbow frames.
+    rgb_marquee_stop();
     rainbow_fill_sequence(brightness);
     rainbow_light_all_slots();
 
@@ -108,6 +118,11 @@ static void rainbow_pwm_start(uint8_t brightness, nrf_pwm_sequence_t const *sequ
     pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
     pwm_config.output_pins[3] = NRF_DRV_PWM_PIN_NOT_USED;
 
+    rainbow_boot_active = boot_animation;
+    rainbow_playback_finished = false;
+    if (boot_animation) {
+        bsp_set_timer(timer, 0);
+    }
     rgb_pwm_init(rainbow_pwm_callback);
     nrf_drv_pwm_simple_playback(&pwm0_ins, sequence, 1, flags);
 }
@@ -124,20 +139,32 @@ void rgb_marquee_stop(void) {
     }
     rgb_marquee_usb_idle_step = 0;
     rgb_marquee_usb_open_step = 0;
+    rainbow_boot_active = false;
+    rainbow_playback_finished = false;
 }
 
 void rgb_marquee_boot_rainbow(void) {
-    rainbow_playback_finished = false;
     rainbow_pwm_start(
         RAINBOW_BOOT_BRIGHTNESS,
         &rainbow_boot_seq,
-        NRF_DRV_PWM_FLAG_STOP
+        NRF_DRV_PWM_FLAG_STOP,
+        true
     );
+}
 
-    while (!rainbow_playback_finished) {
-        // PWM playback runs in hardware while SoftDevice interrupts remain available.
+bool rgb_marquee_boot_rainbow_is_active(void) {
+    return rainbow_boot_active;
+}
+
+bool rgb_marquee_boot_rainbow_poll(void) {
+    if (!rainbow_boot_active) {
+        return false;
+    }
+    if (!rainbow_playback_finished && NO_TIMEOUT_1MS(timer, RAINBOW_BOOT_TIMEOUT_MS)) {
+        return false;
     }
     rgb_marquee_stop();
+    return true;
 }
 
 // reset RGB state machines to force a refresh of the LED color
@@ -527,7 +554,8 @@ void rgb_marquee_usb_idle(void) {
         rainbow_pwm_start(
             RAINBOW_CHARGING_BRIGHTNESS,
             &rainbow_charging_seq,
-            NRF_DRV_PWM_FLAG_LOOP
+            NRF_DRV_PWM_FLAG_LOOP,
+            false
         );
         rgb_marquee_usb_idle_step = 1;
     }

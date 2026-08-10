@@ -469,8 +469,10 @@ static void check_wakeup_src(void) {
 
         // Button wake-up boot animation
         uint8_t animation_config = settings_get_animation_config();
+        bool rainbow_started = false;
         if (animation_config == SettingsAnimationModeFull) {
             rgb_marquee_boot_rainbow();
+            rainbow_started = true;
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
         } else if (animation_config == SettingsAnimationModeSymmetric) {
@@ -480,8 +482,10 @@ static void check_wakeup_src(void) {
         }
 
         // The indicator of the current card slot lights up at the end of the animation.
-        set_slot_light_color(color);
-        light_up_by_slot();
+        if (!rainbow_started) {
+            set_slot_light_color(color);
+            light_up_by_slot();
+        }
 
         // If no operation follows, wait for the timeout and then deep hibernate
         sleep_timer_start(SLEEP_DELAY_MS_BUTTON_WAKEUP);
@@ -517,8 +521,6 @@ static void check_wakeup_src(void) {
 
         if (settings_get_animation_config() == SettingsAnimationModeFull) {
             rgb_marquee_boot_rainbow();
-            set_slot_light_color(color);
-            light_up_by_slot();
         }
 
         // USB plugged in and open communication break has its own light effect, no need to light up for the time being
@@ -540,8 +542,10 @@ static void check_wakeup_src(void) {
 
         // RGB
         uint8_t animation_config = settings_get_animation_config();
+        bool rainbow_started = false;
         if (animation_config == SettingsAnimationModeFull) {
             rgb_marquee_boot_rainbow();
+            rainbow_started = true;
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_from_to(0, 0, 2);
             rgb_marquee_sweep_from_to(1, 2, 5);
@@ -553,8 +557,10 @@ static void check_wakeup_src(void) {
         }
 
         // Show RGB for slot.
-        set_slot_light_color(color);
-        light_up_by_slot();
+        if (!rainbow_started) {
+            set_slot_light_color(color);
+            light_up_by_slot();
+        }
 
         // If the USB is plugged in when first powered up, we can do something accordingly
         if (nrfx_power_usbstatus_get() != NRFX_POWER_USB_STATE_DISCONNECTED) {
@@ -565,6 +571,23 @@ static void check_wakeup_src(void) {
             sleep_timer_start(SLEEP_DELAY_MS_FIRST_POWER); // Wait a while and go straight to hibernation, do nothing
         }
     }
+}
+
+static void boot_rainbow_process(void) {
+    if (!rgb_marquee_boot_rainbow_is_active()) {
+        return;
+    }
+
+    if (g_is_tag_emulating) {
+        // HF/LF emulation has priority over decorative playback.
+        rgb_marquee_stop();
+    } else if (!rgb_marquee_boot_rainbow_poll()) {
+        return;
+    }
+
+    uint8_t slot = tag_emulation_get_slot();
+    set_slot_light_color(get_color_by_slot(slot));
+    light_up_by_slot();
 }
 
 /**@brief change slot
@@ -1037,6 +1060,8 @@ int main(void) {
         lesc_event_process();
         // Button event process
         button_press_process();
+        // Finish or cancel the non-blocking startup animation.
+        boot_rainbow_process();
 
 #if defined(PROJECT_CHAMELEON_ULTRA)
         // Field generator rainbow animation
@@ -1044,7 +1069,7 @@ int main(void) {
 #endif
 
         // Led blink at usb status (only if field generator is off)
-        if (!m_is_field_on) {
+        if (!m_is_field_on && !rgb_marquee_boot_rainbow_is_active()) {
             blink_usb_led_status();
         }
 

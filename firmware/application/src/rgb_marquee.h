@@ -10,6 +10,8 @@ void rgb_marquee_stop(void);
 void rgb_marquee_reset(void);
 bool rgb_marquee_is_enabled(void);
 void rgb_marquee_boot_rainbow(void);
+bool rgb_marquee_boot_rainbow_is_active(void);
+bool rgb_marquee_boot_rainbow_poll(void);
 void rgb_marquee_usb_open_sweep(uint8_t color, uint8_t dir);
 void rgb_marquee_usb_open_symmetric(uint8_t color);
 void rgb_marquee_sweep_to(uint8_t color, uint8_t dir, uint8_t end);
