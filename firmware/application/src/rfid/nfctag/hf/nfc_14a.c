@@ -675,6 +675,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
         }
         case NRFX_NFCT_EVT_FIELD_LOST: {
             g_is_tag_emulating = false;
+            rgb_marquee_release_rf_ownership();
             // call sleep_timer_start *after* unsetting g_is_tag_emulating
             sleep_timer_start(SLEEP_DELAY_MS_FIELD_NFC_LOST);
 

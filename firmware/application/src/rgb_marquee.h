@@ -10,6 +10,8 @@ void rgb_marquee_stop(void);
 void rgb_marquee_reset(void);
 bool rgb_marquee_is_enabled(void);
 void rgb_marquee_request_rf_ownership(void);
+void rgb_marquee_release_rf_ownership(void);
+bool rgb_marquee_rf_owns_leds(void);
 bool rgb_marquee_rf_ownership_pending(void);
 bool rgb_marquee_complete_rf_handoff(void);
 void rgb_marquee_transition_rainbow_start(void);
@@ -22,7 +24,7 @@ void rgb_marquee_slot_switch(uint8_t led_down, uint8_t color_led_down, uint8_t l
 void rgb_marquee_sweep_fade(uint8_t color, uint8_t dir, uint8_t end, uint8_t start_light, uint8_t stop_light);
 void rgb_marquee_sweep_from_to(uint8_t color, uint8_t start, uint8_t stop);
 void rgb_marquee_usb_idle(void);
-void rgb_marquee_show_battery_level(uint8_t percentage);
+bool rgb_marquee_show_battery_level(uint8_t percentage);
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot);
 void rgb_marquee_symmetric_in(uint8_t color, uint8_t slot);
 

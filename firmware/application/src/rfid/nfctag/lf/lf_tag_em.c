@@ -43,6 +43,7 @@ const nrf_pwm_sequence_t *m_pwm_seq = NULL;
 static void lf_field_lost(void) {
     // Open the incident interruption, so that the next event can be in and out normally
     g_is_tag_emulating = false;  // Reset the flag in the emulation
+    rgb_marquee_release_rf_ownership();
     m_is_lf_emulating = false;
     TAG_FIELD_LED_OFF()  // Make sure the indicator light of the LF field status
     // Re-arm LPCOMP so the next field appearance triggers lpcomp_event_handler.

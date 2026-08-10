@@ -59,7 +59,7 @@ static bool m_is_a_btn_press = false;
 static bool m_is_b_btn_release = false;
 static bool m_is_a_btn_release = false;
 
-static bool m_system_off_processing = false;
+static volatile bool m_system_off_processing = false;
 
 // NFC field generator state
 volatile bool m_is_field_on = false;
@@ -73,6 +73,8 @@ static bool m_boot_rainbow_requires_usb = false;
 #define RESET_ON_LF_FIELD_EXISTS_Msk (1UL)
 
 extern bool g_is_low_battery_shutdown;
+
+static void rf_led_ownership_process(void);
 
 static void boot_rainbow_start(bool requires_usb) {
     m_boot_rainbow_requires_usb = requires_usb;
@@ -296,6 +298,7 @@ static bool shutdown_interrupted_by_activity(void) {
         return true;
     }
     if (g_is_tag_emulating ||
+            rgb_marquee_rf_owns_leds() ||
             rgb_marquee_rf_ownership_pending() ||
             nrfx_power_usbstatus_get() != NRFX_POWER_USB_STATE_DISCONNECTED) {
         m_system_off_processing = false;
@@ -696,10 +699,18 @@ static void cycle_slot(bool dec) {
 }
 
 static void show_battery(void) {
+    if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+        rf_led_ownership_process();
+        return;
+    }
     rgb_marquee_stop();
     uint32_t *led_pins = hw_get_led_array();
     // if still in the first 4s after boot, blink red while waiting for battery info
     while (batt_lvl_in_milli_volts == 0) {
+        if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+            rf_led_ownership_process();
+            return;
+        }
         for (int i = 0; i < RGB_LIST_NUM; i++) {
             nrf_gpio_pin_clear(led_pins[i]);
         }
@@ -709,18 +720,33 @@ static void show_battery(void) {
             nrf_gpio_pin_set(led_pins[i]);
         }
         bsp_delay_ms(100);
+        if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+            rf_led_ownership_process();
+            return;
+        }
     }
     // We have data. Keep the bar length, but encode the percentage in color:
     // red at empty, yellow at half, and green at full.
     for (int i = 0; i < RGB_LIST_NUM; i++) {
         nrf_gpio_pin_clear(led_pins[i]);
     }
-    rgb_marquee_show_battery_level(percentage_batt_lvl);
+    if (!rgb_marquee_show_battery_level(percentage_batt_lvl)) {
+        rf_led_ownership_process();
+        return;
+    }
     uint8_t nleds = (percentage_batt_lvl * 2) / 25; // 0->7 (8 for 100% but this is ignored)
     for (int i = 0; i < RGB_LIST_NUM; i++) {
+        if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+            rf_led_ownership_process();
+            return;
+        }
         if (i <= nleds) {
             nrf_gpio_pin_set(led_pins[i]);
             bsp_delay_ms(50);
+            if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+                rf_led_ownership_process();
+                return;
+            }
         }
     }
     // nothing special to finish, we wait for sleep or slot change
@@ -1058,6 +1084,10 @@ static void blink_usb_led_status(void) {
     uint8_t color = get_color_by_slot(slot);
     uint8_t dir = slot > 3 ? 1 : 0;
     static bool is_working = false;
+    if (rgb_marquee_rf_owns_leds() || rgb_marquee_rf_ownership_pending()) {
+        is_working = false;
+        return;
+    }
     if (nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
         if (is_working) {
             is_working = false;

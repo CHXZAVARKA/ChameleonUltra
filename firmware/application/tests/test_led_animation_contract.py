@@ -24,6 +24,8 @@ shutdown = extract_function(
 )
 assert "rgb_marquee_transition_rainbow_start();" in shutdown
 assert "shutdown_interrupted_by_activity()" in shutdown
+assert "static volatile bool m_system_off_processing" in APP_MAIN
+assert "rgb_marquee_rf_owns_leds()" in APP_MAIN
 assert "rgb_marquee_rf_ownership_pending()" in APP_MAIN
 assert "nrfx_power_usbstatus_get()" in APP_MAIN
 
@@ -33,7 +35,8 @@ show_battery = extract_function(
     "static void offline_status_blink_color",
 )
 assert "while (batt_lvl_in_milli_volts == 0)" in show_battery
-assert "rgb_marquee_show_battery_level(percentage_batt_lvl);" in show_battery
+assert "if (!rgb_marquee_show_battery_level(percentage_batt_lvl))" in show_battery
+assert show_battery.count("rgb_marquee_rf_owns_leds()") >= 4
 
 hf_detect = extract_function(
     HF_TAG,
@@ -45,12 +48,25 @@ lf_detect = extract_function(
     "static void lpcomp_event_handler",
     "static void lpcomp_init",
 )
+hf_lost = extract_function(
+    HF_TAG,
+    "case NRFX_NFCT_EVT_FIELD_LOST:",
+    "case NRFX_NFCT_EVT_TX_FRAMESTART:",
+)
+lf_lost = extract_function(
+    LF_TAG,
+    "static void lf_field_lost",
+    "bool is_lf_field_exists",
+)
 assert hf_detect.index("rgb_marquee_request_rf_ownership();") < hf_detect.index(
     "g_is_tag_emulating = true;"
 )
 assert lf_detect.index("rgb_marquee_request_rf_ownership();") < lf_detect.index(
     "g_is_tag_emulating = true;"
 )
+assert "rgb_marquee_release_rf_ownership();" in hf_lost
+assert "rgb_marquee_release_rf_ownership();" in lf_lost
 
 assert "nrfx_pwm_stop(&pwm0_ins, false);" in RGB_MARQUEE
+assert "if (rf_owns_leds || rf_ownership_requested)" in RGB_MARQUEE
 assert "rgb_marquee_complete_rf_handoff" in APP_MAIN

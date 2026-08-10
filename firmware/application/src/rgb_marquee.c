@@ -47,6 +47,7 @@ static autotimer *timer;
 static autotimer *rainbow_dot_timer;
 static volatile bool pwm_initialized = false;
 static volatile bool rf_ownership_requested = false;
+static volatile bool rf_owns_leds = false;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_values_individual_t rainbow_pwm_values[RAINBOW_FRAME_COUNT];
@@ -141,19 +142,23 @@ static void rainbow_advance_dot(uint32_t interval_ms, bool require_usb_enabled) 
     }
     bsp_set_timer(rainbow_dot_timer, 0);
     CRITICAL_REGION_ENTER();
-    if (!require_usb_enabled || g_usb_led_marquee_enable) {
+    if (!rf_owns_leds && !rf_ownership_requested &&
+            (!require_usb_enabled || g_usb_led_marquee_enable)) {
         rainbow_dot_step++;
         rainbow_light_dot(led_bounce_position(rainbow_dot_step, RGB_LIST_NUM));
     }
     CRITICAL_REGION_EXIT();
 }
 
-static void rainbow_pwm_start(
+static bool rainbow_pwm_start(
     uint8_t brightness,
     nrf_pwm_sequence_t const *sequence,
     uint32_t flags,
     bool transition_animation
 ) {
+    if (rf_owns_leds || rf_ownership_requested) {
+        return false;
+    }
     // EasyDMA owns the sequence buffer while PWM is active. Always release it
     // before updating the shared rainbow frames.
     rgb_marquee_stop();
@@ -172,6 +177,7 @@ static void rainbow_pwm_start(
     rgb_pwm_init(rainbow_pwm_callback);
     nrf_drv_pwm_simple_playback(&pwm0_ins, sequence, 1, flags);
     rgb_pwm_honor_pending_rf_request();
+    return !rf_owns_leds && !rf_ownership_requested;
 }
 
 
@@ -600,6 +606,10 @@ void rgb_marquee_sweep_from_to(uint8_t color, uint8_t start, uint8_t stop) {
 
 // Charging animation
 void rgb_marquee_usb_idle(void) {
+    if (rf_owns_leds || rf_ownership_requested) {
+        rgb_marquee_usb_idle_step = 0;
+        return;
+    }
     if (!g_usb_led_marquee_enable && rgb_marquee_usb_idle_step != 0) {
         rgb_marquee_stop();
         return;
@@ -607,19 +617,24 @@ void rgb_marquee_usb_idle(void) {
 
     if (rgb_marquee_usb_idle_step == 0) {
         rgb_marquee_usb_open_step = 0;
-        rainbow_pwm_start(
+        if (!rainbow_pwm_start(
             RAINBOW_CHARGING_BRIGHTNESS,
             &rainbow_charging_seq,
             NRF_DRV_PWM_FLAG_LOOP,
             false
-        );
+        )) {
+            return;
+        }
         rgb_marquee_usb_idle_step = 1;
         return;
     }
     rainbow_advance_dot(RAINBOW_CHARGING_DOT_STEP_MS, true);
 }
 
-void rgb_marquee_show_battery_level(uint8_t percentage) {
+bool rgb_marquee_show_battery_level(uint8_t percentage) {
+    if (rf_owns_leds || rf_ownership_requested) {
+        return false;
+    }
     rainbow_rgb_t color = battery_level_color(
         percentage,
         BATTERY_LEVEL_BRIGHTNESS
@@ -635,6 +650,7 @@ void rgb_marquee_show_battery_level(uint8_t percentage) {
     rgb_pwm_init(NULL);
     nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
     rgb_pwm_honor_pending_rf_request();
+    return !rf_owns_leds && !rf_ownership_requested;
 }
 
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot) {
@@ -768,8 +784,20 @@ bool rgb_marquee_is_enabled(void) {
 }
 
 void rgb_marquee_request_rf_ownership(void) {
+    rf_owns_leds = true;
     rf_ownership_requested = true;
     rgb_pwm_honor_pending_rf_request();
+}
+
+void rgb_marquee_release_rf_ownership(void) {
+    rf_owns_leds = false;
+    // Main performs the final PWM cleanup and restores the active-slot LED
+    // after the field callback has released ownership.
+    rf_ownership_requested = true;
+}
+
+bool rgb_marquee_rf_owns_leds(void) {
+    return rf_owns_leds;
 }
 
 bool rgb_marquee_rf_ownership_pending(void) {
