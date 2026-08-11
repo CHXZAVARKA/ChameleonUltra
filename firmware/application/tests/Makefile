@@ -11,6 +11,7 @@ test: $(TEST_BINARY) $(RAINBOW_TEST_BINARY)
 	$(TEST_BINARY)
 	$(RAINBOW_TEST_BINARY)
 	python3 test_app_cmd_contract.py
+	python3 test_ble_response_contract.py
 	python3 test_dfu_persistence_contract.py
 	python3 test_led_animation_contract.py
 

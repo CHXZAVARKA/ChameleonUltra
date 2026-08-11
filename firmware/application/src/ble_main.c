@@ -21,6 +21,7 @@
 #include "syssleep.h"
 #include "ble_main.h"
 #include "dataframe.h"
+#include "netdata.h"
 #include "hw_connect.h"
 #include "settings.h"
 
@@ -93,6 +94,10 @@ uint8_t           percentage_batt_lvl = 0;
 static nrf_saadc_value_t adc_buf[ADC_BUF_COUNT][ADC_BUF_SIZE];
 static uint16_t   m_conn_handle          = BLE_CONN_HANDLE_INVALID;                 /**< Handle of the current connection. */
 static uint16_t   m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3;            /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
+static uint8_t    m_ble_nus_tx_buffer[sizeof(netdata_frame_raw_t)];
+static uint16_t   m_ble_nus_tx_length = 0;
+static uint16_t   m_ble_nus_tx_offset = 0;
+static bool       m_ble_nus_tx_active = false;
 lf_adc_callback_t m_lf_adc_callback      = NULL;
 
 static ble_uuid_t m_adv_uuids[]          =                                          /**< Universally unique service identifier. */
@@ -189,32 +194,67 @@ static void nus_data_handler(ble_nus_evt_t *p_evt) {
 }
 /**@snippet [Handling the data received over BLE] */
 
+static void nus_tx_reset(void) {
+    m_ble_nus_tx_length = 0;
+    m_ble_nus_tx_offset = 0;
+    m_ble_nus_tx_active = false;
+}
+
+static void nus_tx_continue(void) {
+    while (m_ble_nus_tx_active &&
+            g_is_ble_connected &&
+            m_ble_nus_tx_offset < m_ble_nus_tx_length) {
+        uint16_t chunk_length = MIN(
+            m_ble_nus_max_data_len,
+            m_ble_nus_tx_length - m_ble_nus_tx_offset
+        );
+        ret_code_t err_code = ble_nus_data_send(
+            &m_nus,
+            m_ble_nus_tx_buffer + m_ble_nus_tx_offset,
+            &chunk_length,
+            m_conn_handle
+        );
+
+        if (err_code == NRF_SUCCESS) {
+            m_ble_nus_tx_offset += chunk_length;
+            continue;
+        }
+        if (err_code == NRF_ERROR_RESOURCES || err_code == NRF_ERROR_BUSY) {
+            return;
+        }
+        if (err_code == NRF_ERROR_INVALID_STATE || err_code == NRF_ERROR_NOT_FOUND) {
+            nus_tx_reset();
+            return;
+        }
+        APP_ERROR_CHECK(err_code);
+    }
+
+    if (m_ble_nus_tx_offset == m_ble_nus_tx_length || !g_is_ble_connected) {
+        nus_tx_reset();
+    }
+}
+
 void nus_data_response(uint8_t *p_data, uint16_t length) {
     NRF_LOG_INFO("BLE nus service response data length: %d", length);
     NRF_LOG_HEXDUMP_DEBUG(p_data, length);
 
-    ret_code_t err_code;
-    uint16_t remain = length;
-    uint16_t count = 0;
-    do {
-        remain = MIN(m_ble_nus_max_data_len, remain);
-        err_code = ble_nus_data_send(&m_nus, p_data + count, &remain, m_conn_handle);
-        // NRF_LOG_INFO("Data send length(amount): %d", remain);
-        if (err_code == NRF_SUCCESS) {
-            count += remain;
-            remain = length - count;
-        }
-        // NRF_LOG_INFO("Data send length(count): %d", count);
-        if (err_code == NRF_ERROR_BUSY) {
-            continue;
-        }
-        if ((err_code != NRF_ERROR_INVALID_STATE) &&
-                (err_code != NRF_ERROR_RESOURCES) &&
-                (err_code != NRF_ERROR_NOT_FOUND)) {
-            APP_ERROR_CHECK(err_code);
-        }
+    if (length > sizeof(m_ble_nus_tx_buffer)) {
+        NRF_LOG_ERROR("BLE NUS response exceeds the transmit buffer.");
+        return;
+    }
+    if (!g_is_ble_connected) {
+        return;
+    }
+    if (m_ble_nus_tx_active) {
+        NRF_LOG_ERROR("BLE NUS response already pending.");
+        return;
+    }
 
-    } while (count != length && g_is_ble_connected);
+    memcpy(m_ble_nus_tx_buffer, p_data, length);
+    m_ble_nus_tx_length = length;
+    m_ble_nus_tx_offset = 0;
+    m_ble_nus_tx_active = true;
+    nus_tx_continue();
 }
 
 bool is_nus_working(void) {
@@ -421,8 +461,13 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context) {
             // LED indication will be changed when advertising starts.
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             g_is_ble_connected = false;
+            nus_tx_reset();
             // call sleep_timer_start *after* unsetting g_is_ble_connected
             sleep_timer_start(SLEEP_DELAY_MS_BLE_DISCONNECTED);
+            break;
+
+        case BLE_GATTS_EVT_HVN_TX_COMPLETE:
+            nus_tx_continue();
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST: {
