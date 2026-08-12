@@ -4,6 +4,12 @@
 #include <stdint.h>
 #include "nrf_drv_pwm.h"
 
+typedef enum {
+    RGB_LED_OWNER_HF = 1U << 0U,
+    RGB_LED_OWNER_LF = 1U << 1U,
+    RGB_LED_OWNER_FIELD_GENERATOR = 1U << 2U,
+    RGB_LED_OWNER_USB_REMOVED = 1U << 3U,
+} rgb_led_owner_t;
 
 void rgb_marquee_init(void);
 void rgb_marquee_stop(void);
@@ -17,8 +23,8 @@ void rgb_marquee_slot_switch(uint8_t led_down, uint8_t color_led_down, uint8_t l
 void rgb_marquee_sweep_fade(uint8_t color, uint8_t dir, uint8_t end, uint8_t start_light, uint8_t stop_light);
 void rgb_marquee_sweep_from_to(uint8_t color, uint8_t start, uint8_t stop);
 void rgb_marquee_usb_idle(uint8_t battery_percentage);
-void rgb_marquee_usb_suspend(void);
-void rgb_marquee_usb_resume(void);
+void rgb_marquee_usb_suspend(rgb_led_owner_t owner);
+void rgb_marquee_usb_resume(rgb_led_owner_t owner);
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot);
 void rgb_marquee_symmetric_in(uint8_t color, uint8_t slot);
 

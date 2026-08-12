@@ -1,6 +1,7 @@
 #include "math.h"
 #include "app_error.h"
 #include "app_util_platform.h"
+#include "nrf_atomic.h"
 #include "nrf_gpio.h"
 #include "hw_connect.h"
 #include "bsp_delay.h"
@@ -65,13 +66,13 @@ static uint8_t charging_particle_frame = 0U;
 static uint8_t charging_last_percentage = 0xFFU;
 static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_sequence_t charging_rgb_sequence;
-static volatile bool usb_animation_suspended = false;
+static nrf_atomic_u32_t usb_animation_owners = 0U;
 extern bool g_usb_led_marquee_enable;
 
 static uint16_t get_pwmduty(uint8_t light_level);
 
-void rgb_marquee_usb_suspend(void) {
-    usb_animation_suspended = true;
+void rgb_marquee_usb_suspend(rgb_led_owner_t owner) {
+    nrf_atomic_u32_or(&usb_animation_owners, (uint32_t)owner);
     if (boot_rgb_pwm_initialized) {
         nrfx_pwm_stop(&boot_rgb_pwm_ins, false);
     }
@@ -80,9 +81,11 @@ void rgb_marquee_usb_suspend(void) {
     }
 }
 
-void rgb_marquee_usb_resume(void) {
-    usb_animation_suspended = false;
-    rgb_marquee_usb_idle_step = 0U;
+void rgb_marquee_usb_resume(rgb_led_owner_t owner) {
+    uint32_t owners = nrf_atomic_u32_and(&usb_animation_owners, ~(uint32_t)owner);
+    if (owners == 0U) {
+        rgb_marquee_usb_idle_step = 0U;
+    }
 }
 
 
@@ -582,7 +585,7 @@ static bool charging_show_positions(uint8_t battery_percentage) {
     uint8_t channel = 0U;
 
     CRITICAL_REGION_ENTER();
-    if (g_usb_led_marquee_enable && !usb_animation_suspended) {
+    if (g_usb_led_marquee_enable && usb_animation_owners == 0U) {
         for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
             if (position < filled) {
                 nrf_gpio_pin_set(led_array[position]);
@@ -628,7 +631,7 @@ static bool charging_show_positions(uint8_t battery_percentage) {
         nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
     }
     CRITICAL_REGION_EXIT();
-    return g_usb_led_marquee_enable && !usb_animation_suspended;
+    return g_usb_led_marquee_enable && usb_animation_owners == 0U;
 }
 
 static bool charging_start_rainbow(void) {
@@ -644,7 +647,7 @@ static bool charging_start_rainbow(void) {
     };
     bool started = false;
     CRITICAL_REGION_ENTER();
-    if (g_usb_led_marquee_enable && !usb_animation_suspended) {
+    if (g_usb_led_marquee_enable && usb_animation_owners == 0U) {
         APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
         boot_rgb_pwm_initialized = true;
         nrf_drv_pwm_simple_playback(
@@ -667,7 +670,7 @@ void rgb_marquee_usb_idle(uint8_t battery_percentage) {
         return;
     }
 
-    if (usb_animation_suspended) {
+    if (usb_animation_owners != 0U) {
         return;
     }
 

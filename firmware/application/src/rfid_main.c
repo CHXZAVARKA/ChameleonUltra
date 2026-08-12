@@ -73,7 +73,8 @@ void tag_mode_enter(void) {
         tag_emulation_sense_run();
         if (is_usb_powered()) {
             g_usb_led_marquee_enable = true;
-            rgb_marquee_usb_resume();
+            rgb_marquee_usb_resume(RGB_LED_OWNER_HF);
+            rgb_marquee_usb_resume(RGB_LED_OWNER_LF);
         }
     }
 }

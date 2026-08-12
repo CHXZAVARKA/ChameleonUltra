@@ -853,7 +853,7 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
         case SettingsButtonNfcFieldGenerator:
             if (!m_is_field_on) {
                 g_usb_led_marquee_enable = false;
-                rgb_marquee_usb_suspend();
+                rgb_marquee_usb_suspend(RGB_LED_OWNER_FIELD_GENERATOR);
                 // Initialize reader hardware if not already in reader mode
                 device_mode_t current_mode = get_device_mode();
                 if (current_mode != DEVICE_MODE_READER) {
@@ -900,7 +900,7 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
                 light_up_by_slot();
                 if (is_usb_powered()) {
                     g_usb_led_marquee_enable = true;
-                    rgb_marquee_usb_resume();
+                    rgb_marquee_usb_resume(RGB_LED_OWNER_FIELD_GENERATOR);
                 }
 
                 // Restart sleep timer

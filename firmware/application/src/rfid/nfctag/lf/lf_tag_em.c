@@ -44,6 +44,7 @@ static void lf_field_lost(void) {
     // Open the incident interruption, so that the next event can be in and out normally
     g_is_tag_emulating = false;  // Reset the flag in the emulation
     m_is_lf_emulating = false;
+    rgb_marquee_usb_resume(RGB_LED_OWNER_LF);
     TAG_FIELD_LED_OFF()  // Make sure the indicator light of the LF field status
     // Re-arm LPCOMP so the next field appearance triggers lpcomp_event_handler.
     NRF_LPCOMP->INTENSET = LPCOMP_INTENSET_UP_Msk;
@@ -87,7 +88,7 @@ static void lpcomp_event_handler(nrf_lpcomp_event_t event) {
     g_is_tag_emulating = true;
     // turn off USB light effect when emulating cards
     g_usb_led_marquee_enable = false;
-    rgb_marquee_usb_suspend();
+    rgb_marquee_usb_suspend(RGB_LED_OWNER_LF);
 
     // LED status update
     set_slot_light_color(RGB_BLUE);
@@ -184,7 +185,7 @@ static void lf_sense_enable(void) {
 static void lf_sense_disable(void) {
     g_is_tag_emulating = false;
     g_usb_led_marquee_enable = false;
-    rgb_marquee_usb_suspend();
+    rgb_marquee_usb_suspend(RGB_LED_OWNER_LF);
     nrfx_pwm_uninit(&m_broadcast);
     nrfx_lpcomp_uninit();
     m_pwm_seq = NULL;
