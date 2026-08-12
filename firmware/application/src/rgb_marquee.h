@@ -25,6 +25,7 @@ void rgb_marquee_sweep_from_to(uint8_t color, uint8_t start, uint8_t stop);
 void rgb_marquee_usb_idle(uint8_t battery_percentage);
 void rgb_marquee_usb_suspend(rgb_led_owner_t owner);
 void rgb_marquee_usb_resume(rgb_led_owner_t owner);
+bool rgb_marquee_usb_is_suspended(void);
 void rgb_marquee_symmetric_out(uint8_t color, uint8_t slot);
 void rgb_marquee_symmetric_in(uint8_t color, uint8_t slot);
 

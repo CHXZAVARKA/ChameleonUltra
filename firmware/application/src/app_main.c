@@ -886,6 +886,7 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
             } else {
                 pcd_14a_reader_antenna_off();
                 m_is_field_on = false;
+                rgb_marquee_usb_resume(RGB_LED_OWNER_FIELD_GENERATOR);
                 NRF_LOG_INFO("NFC field OFF");
 
                 // If we're not in reader mode, clean up the hardware
@@ -900,7 +901,6 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
                 light_up_by_slot();
                 if (is_usb_powered()) {
                     g_usb_led_marquee_enable = true;
-                    rgb_marquee_usb_resume(RGB_LED_OWNER_FIELD_GENERATOR);
                 }
 
                 // Restart sleep timer
@@ -1053,7 +1053,7 @@ int main(void) {
 #endif
 
         // Led blink at usb status (only if field generator is off)
-        if (!m_is_field_on) {
+        if (!m_is_field_on && !rgb_marquee_usb_is_suspended()) {
             blink_usb_led_status();
         }
 

@@ -88,6 +88,10 @@ void rgb_marquee_usb_resume(rgb_led_owner_t owner) {
     }
 }
 
+bool rgb_marquee_usb_is_suspended(void) {
+    return usb_animation_owners != 0U;
+}
+
 
 void rgb_marquee_init(void) {
     timer = bsp_obtain_timer(0);
