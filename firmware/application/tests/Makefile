@@ -2,15 +2,17 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -fshort-enums
 
 SOURCE_DIR := ../src
-TEST_BINARY := build/test_slot_reorder
+SLOT_TEST_BINARY := build/test_slot_reorder
+LED_TEST_BINARY := build/test_boot_rainbow
 
 .PHONY: test clean
 
-test: $(TEST_BINARY)
-	$(TEST_BINARY)
+test: $(SLOT_TEST_BINARY) $(LED_TEST_BINARY)
+	$(SLOT_TEST_BINARY)
+	$(LED_TEST_BINARY)
 	python3 test_app_cmd_contract.py
 
-$(TEST_BINARY): test_slot_reorder.c \
+$(SLOT_TEST_BINARY): test_slot_reorder.c \
 	$(SOURCE_DIR)/rfid/nfctag/slot_reorder.c \
 	$(SOURCE_DIR)/rfid/nfctag/slot_reorder_protocol.c \
 	$(SOURCE_DIR)/rfid/nfctag/tag_persistence.c
@@ -21,6 +23,10 @@ $(TEST_BINARY): test_slot_reorder.c \
 		-I$(SOURCE_DIR)/utils \
 		-I$(SOURCE_DIR)/rfid/nfctag \
 		$^ -o $@
+
+$(LED_TEST_BINARY): test_boot_rainbow.c $(SOURCE_DIR)/rgb/rainbow_color.c
+	mkdir -p build
+	$(CC) $(CFLAGS) -I$(SOURCE_DIR)/rgb $^ -o $@
 
 clean:
 	rm -rf build

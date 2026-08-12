@@ -470,9 +470,7 @@ static void check_wakeup_src(void) {
         // Button wake-up boot animation
         uint8_t animation_config = settings_get_animation_config();
         if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_sweep_to(color, !dir, 11);
-            rgb_marquee_sweep_to(color, dir, 11);
-            rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
+            rgb_marquee_boot_rainbow_trail(slot, color);
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
         } else if (animation_config == SettingsAnimationModeSymmetric) {
@@ -540,17 +538,18 @@ static void check_wakeup_src(void) {
         // Initialize the default card slot data.
         tag_emulation_factory_init();
 
-        // RGB
+        bool usb_connected = nrfx_power_usbstatus_get() != NRFX_POWER_USB_STATE_DISCONNECTED;
+
+        // RGB. Skip the blocking boot effect when USB is already present so
+        // firmware recovery and the first app connection are not delayed.
         uint8_t animation_config = settings_get_animation_config();
-        if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_sweep_to(0, !dir, 11);
-            rgb_marquee_sweep_to(1, dir, 11);
-            rgb_marquee_sweep_to(2, !dir, 11);
-        } else if (animation_config == SettingsAnimationModeMinimal) {
+        if (animation_config == SettingsAnimationModeFull && !usb_connected) {
+            rgb_marquee_boot_rainbow_trail(slot, color);
+        } else if (animation_config == SettingsAnimationModeMinimal && !usb_connected) {
             rgb_marquee_sweep_from_to(0, 0, 2);
             rgb_marquee_sweep_from_to(1, 2, 5);
             rgb_marquee_sweep_from_to(2, 5, 7);
-        } else if (animation_config == SettingsAnimationModeSymmetric) {
+        } else if (animation_config == SettingsAnimationModeSymmetric && !usb_connected) {
             rgb_marquee_symmetric_out(0, ~0);
             rgb_marquee_symmetric_in(1, ~0);
             rgb_marquee_symmetric_out(2, ~0);
@@ -561,7 +560,7 @@ static void check_wakeup_src(void) {
         light_up_by_slot();
 
         // If the USB is plugged in when first powered up, we can do something accordingly
-        if (nrfx_power_usbstatus_get() != NRFX_POWER_USB_STATE_DISCONNECTED) {
+        if (usb_connected) {
             NRF_LOG_INFO("USB Power found.");
             // usb plugged in can broadcast BLE at will
             advertising_start(false);
