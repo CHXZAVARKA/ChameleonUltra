@@ -322,11 +322,24 @@ static void system_off_enter(void) {
             }
         }
         if (animation_config == SettingsAnimationModeFull) {
-            if (m_system_off_processing) rgb_marquee_sweep_from_to(color, slot, dir ? 7 : 0);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, dir, 7, 99, 75);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, !dir, 7, 75, 50);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, dir, 7, 50, 25);
-            if (m_system_off_processing) rgb_marquee_sweep_fade(color, !dir, 7, 25, 0);
+            if (m_system_off_processing && !rgb_marquee_full_shutdown_begin(slot)) {
+                m_system_off_processing = false;
+            }
+            if (m_system_off_processing && !rgb_marquee_full_shutdown_move_to_edge(slot, dir ? 7 : 0)) {
+                m_system_off_processing = false;
+            }
+            if (m_system_off_processing && !rgb_marquee_full_shutdown_fade(dir, 7, 99, 75)) {
+                m_system_off_processing = false;
+            }
+            if (m_system_off_processing && !rgb_marquee_full_shutdown_fade(!dir, 7, 75, 50)) {
+                m_system_off_processing = false;
+            }
+            if (m_system_off_processing && !rgb_marquee_full_shutdown_fade(dir, 7, 50, 25)) {
+                m_system_off_processing = false;
+            }
+            if (m_system_off_processing && !rgb_marquee_full_shutdown_fade(!dir, 7, 25, 0)) {
+                m_system_off_processing = false;
+            }
         } else if (animation_config == SettingsAnimationModeMinimal) {
             if (m_system_off_processing) rgb_marquee_sweep_from_to(color, slot, !dir ? 7 : 0);
         } else if (animation_config == SettingsAnimationModeSymmetric) {
@@ -337,8 +350,17 @@ static void system_off_enter(void) {
             for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
                 nrf_gpio_pin_clear(p_led_array[i]);
             }
+            set_slot_light_color(color);
             light_up_by_slot();
-            sleep_timer_start(SLEEP_DELAY_MS_BUTTON_CLICK);
+            if (g_is_tag_emulating) {
+                if (rgb_marquee_usb_owner_is_active(RGB_LED_OWNER_HF)) {
+                    set_slot_light_color(RGB_GREEN);
+                } else if (rgb_marquee_usb_owner_is_active(RGB_LED_OWNER_LF)) {
+                    set_slot_light_color(RGB_BLUE);
+                }
+            } else {
+                sleep_timer_start(SLEEP_DELAY_MS_BUTTON_CLICK);
+            }
             return;
         }
     }
@@ -472,7 +494,7 @@ static void check_wakeup_src(void) {
         // Button wake-up boot animation
         uint8_t animation_config = settings_get_animation_config();
         if (animation_config == SettingsAnimationModeFull) {
-            rgb_marquee_boot_rainbow_trail(slot, color);
+            rgb_marquee_full_startup_rainbow(slot, color);
         } else if (animation_config == SettingsAnimationModeMinimal) {
             rgb_marquee_sweep_to(color, !dir, dir ? slot : 7 - slot);
         } else if (animation_config == SettingsAnimationModeSymmetric) {

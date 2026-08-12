@@ -22,6 +22,7 @@ NRF_LOG_MODULE_REGISTER();
 #define BOOT_RAINBOW_BRIGHTNESS 176U
 #define BOOT_RAINBOW_FRAME_MS 40U
 #define BOOT_RAINBOW_MAX_FRAMES 15U
+#define FULL_SHUTDOWN_FRAME_MS 50U
 #define CHARGING_RAINBOW_BRIGHTNESS 118U
 #define CHARGING_RAINBOW_FRAME_COUNT 48U
 #define CHARGING_RAINBOW_FRAME_REPEATS 32U
@@ -65,6 +66,7 @@ static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t charging_particle_frame = 0U;
 static uint8_t charging_last_percentage = 0xFFU;
 static uint8_t rgb_marquee_usb_open_step = 0;
+static nrf_pwm_sequence_t motion_rgb_sequence;
 static nrf_pwm_sequence_t charging_rgb_sequence;
 static nrf_atomic_u32_t usb_animation_owners = 0U;
 extern bool g_usb_led_marquee_enable;
@@ -90,6 +92,10 @@ void rgb_marquee_usb_resume(rgb_led_owner_t owner) {
 
 bool rgb_marquee_usb_is_suspended(void) {
     return usb_animation_owners != 0U;
+}
+
+bool rgb_marquee_usb_owner_is_active(rgb_led_owner_t owner) {
+    return (usb_animation_owners & (uint32_t)owner) != 0U;
 }
 
 
@@ -121,6 +127,186 @@ static void rainbow_prepare_colors(uint8_t frame_count, uint8_t brightness) {
         rgb_frames[frame].channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
         rgb_frames[frame].channel_3 = rainbow_pwm_compare(0U, PWM_MAX);
     }
+}
+
+static bool rainbow_start_color_layer(uint8_t frame_count, uint8_t frame_ms, uint8_t brightness) {
+    if (frame_count == 0U || frame_count > CHARGING_RAINBOW_FRAME_COUNT || frame_ms == 0U) {
+        return false;
+    }
+
+    rgb_marquee_stop();
+    rainbow_prepare_colors(frame_count, brightness);
+    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    motion_rgb_sequence.values.p_individual = rgb_frames;
+    motion_rgb_sequence.length = (uint16_t)(frame_count * 4U);
+    motion_rgb_sequence.repeats = (uint16_t)(frame_ms - 1U);
+    motion_rgb_sequence.end_delay = 0U;
+    APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
+    boot_rgb_pwm_initialized = true;
+    nrf_drv_pwm_simple_playback(
+        &boot_rgb_pwm_ins,
+        &motion_rgb_sequence,
+        1,
+        NRF_DRV_PWM_FLAG_STOP
+    );
+    return true;
+}
+
+static void pwm_position_channel_set(uint8_t channel, uint16_t duty) {
+    switch (channel) {
+        case 0U:
+            pwm_sequ_val.channel_0 = duty;
+            break;
+        case 1U:
+            pwm_sequ_val.channel_1 = duty;
+            break;
+        case 2U:
+            pwm_sequ_val.channel_2 = duty;
+            break;
+        default:
+            pwm_sequ_val.channel_3 = duty;
+            break;
+    }
+}
+
+static void position_outputs_clear(void) {
+    for (uint8_t channel = 0U; channel < BOOT_TRAIL_LENGTH; channel++) {
+        pwm_config.output_pins[channel] = NRF_DRV_PWM_PIN_NOT_USED;
+    }
+}
+
+static void position_frame_play(void) {
+    nrfx_pwm_uninit(&pwm0_ins);
+    APP_ERROR_CHECK(nrf_drv_pwm_init(&pwm0_ins, &pwm_config, NULL));
+    nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+}
+
+static void stock_rainbow_sweep_frame_show(uint8_t frame, uint8_t dir, uint8_t end) {
+    static const uint16_t stock_duties[BOOT_TRAIL_LENGTH] = {980U, 880U, 600U, 1U};
+    uint32_t *led_pins = hw_get_led_array();
+
+    position_outputs_clear();
+    for (uint8_t channel = 0U; channel < BOOT_TRAIL_LENGTH; channel++) {
+        int8_t position = stock_sweep_position(frame, channel, dir, end);
+        pwm_position_channel_set(channel, stock_duties[channel]);
+        if (position >= 0) {
+            pwm_config.output_pins[channel] = led_pins[(uint8_t)position];
+        }
+    }
+    position_frame_play();
+}
+
+static void stock_rainbow_sweep(uint8_t dir, uint8_t end) {
+    uint8_t frame_count = stock_sweep_frame_count(end);
+    for (uint8_t frame = 0U; frame < frame_count; frame++) {
+        stock_rainbow_sweep_frame_show(frame, dir, end);
+        bsp_delay_ms(BOOT_RAINBOW_FRAME_MS);
+    }
+}
+
+void rgb_marquee_full_startup_rainbow(uint8_t slot, uint8_t final_color) {
+    uint32_t *led_pins = hw_get_led_array();
+    uint8_t frame_count = stock_full_startup_frame_count(slot, RGB_LIST_NUM);
+    uint8_t dir = slot > 3U ? 1U : 0U;
+    uint8_t final_end = dir != 0U ? slot : (uint8_t)(7U - slot);
+
+    if (!rainbow_start_color_layer(frame_count, BOOT_RAINBOW_FRAME_MS, BOOT_RAINBOW_BRIGHTNESS)) {
+        return;
+    }
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        nrf_gpio_pin_clear(led_pins[position]);
+    }
+
+    stock_rainbow_sweep((uint8_t)!dir, 11U);
+    stock_rainbow_sweep(dir, 11U);
+    stock_rainbow_sweep((uint8_t)!dir, final_end);
+
+    rgb_marquee_stop();
+    set_slot_light_color(final_color);
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        if (position == slot) {
+            nrf_gpio_pin_set(led_pins[position]);
+        } else {
+            nrf_gpio_pin_clear(led_pins[position]);
+        }
+    }
+}
+
+static bool rf_field_owns_leds(void) {
+    return rgb_marquee_usb_owner_is_active(RGB_LED_OWNER_HF) ||
+           rgb_marquee_usb_owner_is_active(RGB_LED_OWNER_LF);
+}
+
+bool rgb_marquee_full_shutdown_begin(uint8_t slot) {
+    uint8_t stop = slot > 3U ? 7U : 0U;
+    uint8_t frame_count = (uint8_t)(
+        stock_linear_frame_count(slot, stop) + stock_fade_frame_count(7U) * 4U
+    );
+    if (rf_field_owns_leds()) {
+        return false;
+    }
+    bool started = rainbow_start_color_layer(
+        frame_count,
+        FULL_SHUTDOWN_FRAME_MS,
+        BOOT_RAINBOW_BRIGHTNESS
+    );
+    if (rf_field_owns_leds()) {
+        rgb_marquee_stop();
+        return false;
+    }
+    return started;
+}
+
+bool rgb_marquee_full_shutdown_move_to_edge(uint8_t start, uint8_t stop) {
+    uint32_t *led_pins = hw_get_led_array();
+    uint8_t frame_count = stock_linear_frame_count(start, stop);
+
+    pwm_sequ_val.channel_0 = get_pwmduty(99U);
+    pwm_sequ_val.channel_1 = 0U;
+    pwm_sequ_val.channel_2 = 0U;
+    pwm_sequ_val.channel_3 = 0U;
+    for (uint8_t frame = 0U; frame < frame_count; frame++) {
+        if (rf_field_owns_leds()) {
+            return false;
+        }
+        position_outputs_clear();
+        pwm_config.output_pins[0] = led_pins[stock_linear_position(frame, start, stop)];
+        position_frame_play();
+        bsp_delay_ms(FULL_SHUTDOWN_FRAME_MS);
+    }
+    return !rf_field_owns_leds();
+}
+
+bool rgb_marquee_full_shutdown_fade(
+    uint8_t dir,
+    uint8_t end,
+    uint8_t start_light,
+    uint8_t stop_light
+) {
+    uint32_t *led_pins = hw_get_led_array();
+    uint8_t frame_count = stock_fade_frame_count(end);
+
+    for (uint8_t frame = 0U; frame < frame_count; frame++) {
+        if (rf_field_owns_leds()) {
+            return false;
+        }
+        position_outputs_clear();
+        for (uint8_t channel = 0U; channel < BOOT_TRAIL_LENGTH; channel++) {
+            int8_t position = stock_fade_position(frame, channel, dir, end);
+            pwm_position_channel_set(
+                channel,
+                get_pwmduty(stock_fade_level(frame, channel, end, start_light, stop_light))
+            );
+            if (position >= 0) {
+                pwm_config.output_pins[channel] = led_pins[(uint8_t)position];
+            }
+        }
+        position_frame_play();
+        bsp_delay_ms(FULL_SHUTDOWN_FRAME_MS);
+    }
+    return !rf_field_owns_leds();
 }
 
 static void boot_rainbow_show_trail(uint8_t frame, uint8_t slot) {

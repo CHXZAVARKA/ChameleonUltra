@@ -151,6 +151,156 @@ uint8_t boot_trail_level(uint8_t frame, uint8_t position, uint8_t start, uint8_t
     return level;
 }
 
+uint8_t stock_sweep_frame_count(uint8_t end) {
+    uint16_t frame_count = (uint16_t)end + 4U;
+    return frame_count < 12U ? (uint8_t)frame_count : 12U;
+}
+
+static void stock_trail_channels(uint8_t frame, int8_t channel_positions[BOOT_TRAIL_LENGTH]) {
+    for (uint8_t channel = 0U; channel < BOOT_TRAIL_LENGTH; channel++) {
+        channel_positions[channel] = -1;
+    }
+
+    if (frame < 3U) {
+        for (uint8_t age = 0U; age <= frame; age++) {
+            channel_positions[3U - age] = (int8_t)(frame - age);
+        }
+    } else if (frame <= 7U) {
+        for (uint8_t age = 0U; age < BOOT_TRAIL_LENGTH; age++) {
+            channel_positions[3U - age] = (int8_t)(frame - age);
+        }
+    } else if (frame <= 10U) {
+        uint8_t visible = (uint8_t)(11U - frame);
+        for (uint8_t channel = 0U; channel < visible; channel++) {
+            channel_positions[channel] = (int8_t)(frame - 3U + channel);
+        }
+    }
+}
+
+static int8_t stock_physical_position(int8_t path_position, uint8_t dir) {
+    if (path_position < 0 || path_position > 7) {
+        return -1;
+    }
+    return dir == 0U ? path_position : (int8_t)(7 - path_position);
+}
+
+int8_t stock_sweep_position(uint8_t frame, uint8_t channel, uint8_t dir, uint8_t end) {
+    if (channel >= BOOT_TRAIL_LENGTH || frame >= stock_sweep_frame_count(end)) {
+        return -1;
+    }
+    int8_t channel_positions[BOOT_TRAIL_LENGTH];
+    stock_trail_channels(frame, channel_positions);
+    if (frame >= end) {
+        uint8_t hidden = (uint8_t)(frame - end);
+        for (uint8_t index = 0U; index < hidden && index < BOOT_TRAIL_LENGTH; index++) {
+            channel_positions[3U - index] = -1;
+        }
+        if (end <= 7U) {
+            channel_positions[3] = (int8_t)end;
+        }
+    }
+    return stock_physical_position(channel_positions[channel], dir);
+}
+
+int8_t stock_sweep_channel(uint8_t frame, uint8_t position, uint8_t dir, uint8_t end) {
+    if (position >= 8U || frame >= stock_sweep_frame_count(end)) {
+        return -1;
+    }
+
+    for (int8_t channel = 3; channel >= 0; channel--) {
+        if (stock_sweep_position(frame, (uint8_t)channel, dir, end) == (int8_t)position) {
+            return channel;
+        }
+    }
+    return -1;
+}
+
+uint8_t stock_full_startup_frame_count(uint8_t slot, uint8_t position_count) {
+    if (position_count != 8U || slot >= position_count) {
+        return 0U;
+    }
+    uint8_t dir = slot > 3U ? 1U : 0U;
+    uint8_t final_end = dir != 0U ? slot : (uint8_t)(7U - slot);
+    return (uint8_t)(
+        stock_sweep_frame_count(11U) * 2U + stock_sweep_frame_count(final_end)
+    );
+}
+
+int8_t stock_full_startup_channel(
+    uint8_t frame,
+    uint8_t position,
+    uint8_t slot,
+    uint8_t position_count
+) {
+    uint8_t frame_count = stock_full_startup_frame_count(slot, position_count);
+    if (frame >= frame_count || position >= position_count) {
+        return -1;
+    }
+
+    uint8_t dir = slot > 3U ? 1U : 0U;
+    uint8_t long_pass_frames = stock_sweep_frame_count(11U);
+    if (frame < long_pass_frames) {
+        return stock_sweep_channel(frame, position, (uint8_t)!dir, 11U);
+    }
+    frame = (uint8_t)(frame - long_pass_frames);
+    if (frame < long_pass_frames) {
+        return stock_sweep_channel(frame, position, dir, 11U);
+    }
+    frame = (uint8_t)(frame - long_pass_frames);
+    uint8_t final_end = dir != 0U ? slot : (uint8_t)(7U - slot);
+    return stock_sweep_channel(frame, position, (uint8_t)!dir, final_end);
+}
+
+uint8_t stock_linear_frame_count(uint8_t start, uint8_t stop) {
+    return start > stop ? (uint8_t)(start - stop + 1U) : (uint8_t)(stop - start + 1U);
+}
+
+uint8_t stock_linear_position(uint8_t frame, uint8_t start, uint8_t stop) {
+    uint8_t frame_count = stock_linear_frame_count(start, stop);
+    uint8_t bounded = frame < frame_count ? frame : (uint8_t)(frame_count - 1U);
+    return start < stop ? (uint8_t)(start + bounded) : (uint8_t)(start - bounded);
+}
+
+uint8_t stock_fade_frame_count(uint8_t end) {
+    return end < 12U ? end : 12U;
+}
+
+int8_t stock_fade_position(uint8_t frame, uint8_t channel, uint8_t dir, uint8_t end) {
+    if (channel >= BOOT_TRAIL_LENGTH || frame >= stock_fade_frame_count(end)) {
+        return -1;
+    }
+    int8_t channel_positions[BOOT_TRAIL_LENGTH];
+    stock_trail_channels(frame, channel_positions);
+    return stock_physical_position(channel_positions[channel], dir);
+}
+
+int8_t stock_fade_channel(uint8_t frame, uint8_t position, uint8_t dir, uint8_t end) {
+    if (position >= 8U || frame >= stock_fade_frame_count(end)) {
+        return -1;
+    }
+    for (int8_t channel = 3; channel >= 0; channel--) {
+        if (stock_fade_position(frame, (uint8_t)channel, dir, end) == (int8_t)position) {
+            return channel;
+        }
+    }
+    return -1;
+}
+
+uint8_t stock_fade_level(
+    uint8_t frame,
+    uint8_t channel,
+    uint8_t end,
+    uint8_t start_light,
+    uint8_t stop_light
+) {
+    static const double channel_scale[BOOT_TRAIL_LENGTH] = {0.01, 0.30, 0.60, 0.99};
+    if (end == 0U || channel >= BOOT_TRAIL_LENGTH || frame >= stock_fade_frame_count(end)) {
+        return 0U;
+    }
+    double light = (((double)stop_light - (double)start_light) / end) * frame + start_light;
+    return (uint8_t)(channel_scale[channel] * light);
+}
+
 uint8_t charging_filled_count(uint8_t percentage, uint8_t position_count) {
     if (position_count == 0U) {
         return 0U;

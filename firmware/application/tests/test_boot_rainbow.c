@@ -80,12 +80,96 @@ static void assert_primary_and_secondary_hues(void) {
     assert(magenta.red > 0U && magenta.green == 0U && magenta.blue > 0U);
 }
 
+static int8_t brightest_position_for_startup(uint8_t frame, uint8_t slot) {
+    for (uint8_t position = 0U; position < 8U; position++) {
+        if (stock_full_startup_channel(frame, position, slot, 8U) == 3) {
+            return (int8_t)position;
+        }
+    }
+    return -1;
+}
+
+static int8_t brightest_position_for_fade(uint8_t frame, uint8_t dir) {
+    for (uint8_t position = 0U; position < 8U; position++) {
+        if (stock_fade_channel(frame, position, dir, 7U) == 3) {
+            return (int8_t)position;
+        }
+    }
+    return -1;
+}
+
+static void assert_stock_full_startup_contract(void) {
+    static const int8_t slot_1_brightest[] = {
+        7, 6, 5, 4, 3, 2, 1, 0, -1, -1, -1, -1,
+        0, 1, 2, 3, 4, 5, 6, 7, -1, -1, -1, -1,
+        7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0,
+    };
+    assert(stock_full_startup_frame_count(0U, 8U) == sizeof(slot_1_brightest));
+    for (uint8_t frame = 0U; frame < sizeof(slot_1_brightest); frame++) {
+        assert(brightest_position_for_startup(frame, 0U) == slot_1_brightest[frame]);
+    }
+
+    static const int8_t slot_6_brightest[] = {
+        0, 1, 2, 3, 4, 5, 6, 7, -1, -1, -1, -1,
+        7, 6, 5, 4, 3, 2, 1, 0, -1, -1, -1, -1,
+        0, 1, 2, 3, 4, 5, 5, 5, 5,
+    };
+    assert(stock_full_startup_frame_count(5U, 8U) == sizeof(slot_6_brightest));
+    for (uint8_t frame = 0U; frame < sizeof(slot_6_brightest); frame++) {
+        assert(brightest_position_for_startup(frame, 5U) == slot_6_brightest[frame]);
+    }
+
+    uint8_t final_frame = (uint8_t)(stock_full_startup_frame_count(0U, 8U) - 1U);
+    for (uint8_t position = 0U; position < 8U; position++) {
+        assert(stock_full_startup_channel(final_frame, position, 0U, 8U) ==
+               (position == 0U ? 3 : -1));
+    }
+
+    static const int8_t forward_trail[] = {0, 1, 2, 3};
+    static const int8_t edge_trail[] = {4, 5, 6, 7};
+    static const int8_t leaving_edge[] = {5, 6, 7, -1};
+    static const int8_t final_endpoint[] = {7, -1, -1, 7};
+    for (uint8_t channel = 0U; channel < 4U; channel++) {
+        assert(stock_sweep_position(3U, channel, 0U, 11U) == forward_trail[channel]);
+        assert(stock_sweep_position(7U, channel, 0U, 11U) == edge_trail[channel]);
+        assert(stock_sweep_position(8U, channel, 0U, 11U) == leaving_edge[channel]);
+        assert(stock_sweep_position(10U, channel, 0U, 7U) == final_endpoint[channel]);
+        assert(stock_sweep_position(11U, channel, 0U, 11U) == -1);
+        assert(stock_sweep_position(11U, channel, 1U, 11U) == -1);
+    }
+}
+
+static void assert_stock_full_shutdown_contract(void) {
+    assert(stock_linear_frame_count(5U, 7U) == 3U);
+    assert(stock_linear_position(0U, 5U, 7U) == 5U);
+    assert(stock_linear_position(1U, 5U, 7U) == 6U);
+    assert(stock_linear_position(2U, 5U, 7U) == 7U);
+
+    assert(stock_fade_frame_count(7U) == 7U);
+    for (uint8_t frame = 0U; frame < 7U; frame++) {
+        assert(brightest_position_for_fade(frame, 0U) == (int8_t)frame);
+        assert(brightest_position_for_fade(frame, 1U) == (int8_t)(7U - frame));
+    }
+
+    static const uint8_t head_levels[] = {98U, 94U, 91U, 87U, 84U, 81U, 77U};
+    for (uint8_t frame = 0U; frame < 7U; frame++) {
+        assert(stock_fade_level(frame, 3U, 7U, 99U, 75U) == head_levels[frame]);
+    }
+    assert(stock_fade_level(6U, 3U, 7U, 25U, 0U) == 3U);
+    for (uint8_t channel = 0U; channel < 4U; channel++) {
+        assert(stock_fade_position(7U, channel, 0U, 7U) == -1);
+        assert(stock_fade_position(7U, channel, 1U, 7U) == -1);
+    }
+}
+
 int main(void) {
     assert_stable_perceived_brightness(118U);
     assert_stable_perceived_brightness(176U);
     assert_smooth_channel_transitions(118U);
     assert_smooth_channel_transitions(176U);
     assert_primary_and_secondary_hues();
+    assert_stock_full_startup_contract();
+    assert_stock_full_shutdown_contract();
 
     static const uint8_t from_slot_1[] = {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 6U, 5U, 4U, 3U, 2U, 1U, 0U};
     assert(boot_trail_frame_count(0U, 8U) == sizeof(from_slot_1));
