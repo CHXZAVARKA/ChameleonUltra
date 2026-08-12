@@ -1,36 +1,60 @@
 #include "rainbow_color.h"
 
 #define PWM_POLARITY_FALLING 0x8000U
+#define PERCEIVED_RED_WEIGHT 299U
+#define PERCEIVED_GREEN_WEIGHT 587U
+#define PERCEIVED_BLUE_WEIGHT 114U
+#define COLOR_SCALE_ONE (1UL << 16U)
 
-static uint16_t integer_sqrt(uint32_t value) {
-    uint32_t original = value;
-    uint32_t result = 0U;
-    uint32_t bit = 1UL << 30U;
+// HSP luma weights model perceived brightness after the quadratic PWM curve.
+// Blue is the least efficient channel, so it anchors the target without clipping.
 
-    while (bit > value) {
-        bit >>= 2U;
-    }
-    while (bit != 0U) {
-        if (value >= result + bit) {
-            value -= result + bit;
-            result = (result >> 1U) + bit;
-        } else {
-            result >>= 1U;
-        }
-        bit >>= 2U;
-    }
-
-    uint32_t lower_error = original - result * result;
-    uint32_t upper = result + 1U;
-    uint32_t upper_error = upper * upper - original;
-    return (uint16_t)(upper_error < lower_error ? upper : result);
+static uint32_t perceived_energy(rainbow_rgb_t color) {
+    return PERCEIVED_RED_WEIGHT * (uint32_t)color.red * color.red +
+           PERCEIVED_GREEN_WEIGHT * (uint32_t)color.green * color.green +
+           PERCEIVED_BLUE_WEIGHT * (uint32_t)color.blue * color.blue;
 }
 
-static uint8_t normalize_channel(uint8_t channel, uint8_t brightness, uint16_t magnitude) {
-    if (channel == 0U || magnitude == 0U) {
-        return 0U;
+static uint8_t scale_channel(uint8_t channel, uint32_t scale) {
+    return (uint8_t)(((uint32_t)channel * scale + COLOR_SCALE_ONE / 2U) / COLOR_SCALE_ONE);
+}
+
+static rainbow_rgb_t scale_color(rainbow_rgb_t color, uint32_t scale) {
+    rainbow_rgb_t scaled = {
+        .red = scale_channel(color.red, scale),
+        .green = scale_channel(color.green, scale),
+        .blue = scale_channel(color.blue, scale),
+    };
+    return scaled;
+}
+
+static uint32_t distance(uint32_t left, uint32_t right) {
+    return left > right ? left - right : right - left;
+}
+
+static rainbow_rgb_t balance_perceived_brightness(rainbow_rgb_t color, uint8_t brightness) {
+    uint32_t target = PERCEIVED_BLUE_WEIGHT * (uint32_t)brightness * brightness;
+    uint32_t lower = 0U;
+    uint32_t upper = COLOR_SCALE_ONE;
+
+    while (lower < upper) {
+        uint32_t scale = (lower + upper + 1U) / 2U;
+        if (perceived_energy(scale_color(color, scale)) <= target) {
+            lower = scale;
+        } else {
+            upper = scale - 1U;
+        }
     }
-    return (uint8_t)(((uint32_t)channel * brightness + magnitude / 2U) / magnitude);
+
+    rainbow_rgb_t lower_color = scale_color(color, lower);
+    if (lower == COLOR_SCALE_ONE) {
+        return lower_color;
+    }
+    rainbow_rgb_t upper_color = scale_color(color, lower + 1U);
+    return distance(perceived_energy(lower_color), target) <=
+                   distance(perceived_energy(upper_color), target)
+               ? lower_color
+               : upper_color;
 }
 
 rainbow_rgb_t rainbow_color_at(uint16_t phase, uint8_t brightness) {
@@ -68,14 +92,7 @@ rainbow_rgb_t rainbow_color_at(uint16_t phase, uint8_t brightness) {
             break;
     }
 
-    uint32_t energy = (uint32_t)color.red * color.red +
-                      (uint32_t)color.green * color.green +
-                      (uint32_t)color.blue * color.blue;
-    uint16_t magnitude = integer_sqrt(energy);
-    color.red = normalize_channel(color.red, brightness, magnitude);
-    color.green = normalize_channel(color.green, brightness, magnitude);
-    color.blue = normalize_channel(color.blue, brightness, magnitude);
-    return color;
+    return balance_perceived_brightness(color, brightness);
 }
 
 uint16_t rainbow_pwm_compare(uint8_t intensity, uint16_t pwm_top) {

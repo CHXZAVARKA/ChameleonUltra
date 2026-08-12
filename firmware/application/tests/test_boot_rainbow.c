@@ -4,20 +4,88 @@
 
 #include "rainbow_color.h"
 
-static void assert_color(uint16_t phase, uint8_t red, uint8_t green, uint8_t blue) {
-    rainbow_rgb_t color = rainbow_color_at(phase, 255U);
-    assert(color.red == red);
-    assert(color.green == green);
-    assert(color.blue == blue);
+#define TEST_PWM_TOP 1000U
+#define PERCEIVED_RED_WEIGHT 299U
+#define PERCEIVED_GREEN_WEIGHT 587U
+#define PERCEIVED_BLUE_WEIGHT 114U
+
+static uint16_t pwm_on_time(uint8_t intensity) {
+    return (uint16_t)(TEST_PWM_TOP - (rainbow_pwm_compare(intensity, TEST_PWM_TOP) & 0x7FFFU));
+}
+
+static uint32_t perceived_brightness_energy(rainbow_rgb_t color) {
+    return PERCEIVED_RED_WEIGHT * pwm_on_time(color.red) +
+           PERCEIVED_GREEN_WEIGHT * pwm_on_time(color.green) +
+           PERCEIVED_BLUE_WEIGHT * pwm_on_time(color.blue);
+}
+
+static uint8_t channel_delta(uint8_t left, uint8_t right) {
+    return left > right ? (uint8_t)(left - right) : (uint8_t)(right - left);
+}
+
+static void assert_stable_perceived_brightness(uint8_t brightness) {
+    uint32_t minimum = UINT32_MAX;
+    uint32_t maximum = 0U;
+    uint16_t minimum_phase = 0U;
+    uint16_t maximum_phase = 0U;
+
+    for (uint16_t phase = 0U; phase < RAINBOW_PHASE_CYCLE; phase++) {
+        uint32_t energy = perceived_brightness_energy(rainbow_color_at(phase, brightness));
+        if (energy < minimum) {
+            minimum = energy;
+            minimum_phase = phase;
+        }
+        if (energy > maximum) {
+            maximum = energy;
+            maximum_phase = phase;
+        }
+    }
+
+    fprintf(
+        stderr,
+        "rainbow perceived brightness: min=%lu at phase=%u, max=%lu at phase=%u, spread=%lu\n",
+        (unsigned long)minimum,
+        minimum_phase,
+        (unsigned long)maximum,
+        maximum_phase,
+        (unsigned long)(maximum - minimum)
+    );
+    assert(maximum - minimum <= maximum / 12U);
+}
+
+static void assert_smooth_channel_transitions(uint8_t brightness) {
+    rainbow_rgb_t previous = rainbow_color_at(RAINBOW_PHASE_CYCLE - 1U, brightness);
+    for (uint16_t phase = 0U; phase < RAINBOW_PHASE_CYCLE; phase++) {
+        rainbow_rgb_t current = rainbow_color_at(phase, brightness);
+        assert(channel_delta(previous.red, current.red) <= 2U);
+        assert(channel_delta(previous.green, current.green) <= 2U);
+        assert(channel_delta(previous.blue, current.blue) <= 2U);
+        previous = current;
+    }
+}
+
+static void assert_primary_and_secondary_hues(void) {
+    rainbow_rgb_t red = rainbow_color_at(0U, 255U);
+    rainbow_rgb_t yellow = rainbow_color_at(256U, 255U);
+    rainbow_rgb_t green = rainbow_color_at(512U, 255U);
+    rainbow_rgb_t cyan = rainbow_color_at(768U, 255U);
+    rainbow_rgb_t blue = rainbow_color_at(1024U, 255U);
+    rainbow_rgb_t magenta = rainbow_color_at(1280U, 255U);
+
+    assert(red.red > 0U && red.green == 0U && red.blue == 0U);
+    assert(yellow.red > 0U && yellow.green > 0U && yellow.blue == 0U);
+    assert(green.red == 0U && green.green > 0U && green.blue == 0U);
+    assert(cyan.red == 0U && cyan.green > 0U && cyan.blue > 0U);
+    assert(blue.red == 0U && blue.green == 0U && blue.blue > 0U);
+    assert(magenta.red > 0U && magenta.green == 0U && magenta.blue > 0U);
 }
 
 int main(void) {
-    assert_color(0U, 255U, 0U, 0U);
-    assert_color(256U, 180U, 180U, 0U);
-    assert_color(512U, 0U, 255U, 0U);
-    assert_color(768U, 0U, 180U, 180U);
-    assert_color(1024U, 0U, 0U, 255U);
-    assert_color(1280U, 180U, 0U, 180U);
+    assert_stable_perceived_brightness(118U);
+    assert_stable_perceived_brightness(176U);
+    assert_smooth_channel_transitions(118U);
+    assert_smooth_channel_transitions(176U);
+    assert_primary_and_secondary_hues();
 
     static const uint8_t from_slot_1[] = {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 6U, 5U, 4U, 3U, 2U, 1U, 0U};
     assert(boot_trail_frame_count(0U, 8U) == sizeof(from_slot_1));
