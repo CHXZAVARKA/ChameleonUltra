@@ -101,6 +101,18 @@ uint16_t rainbow_pwm_compare(uint8_t intensity, uint16_t pwm_top) {
     return (uint16_t)(PWM_POLARITY_FALLING | (pwm_top - on_time));
 }
 
+uint32_t rainbow_pwm_repeats(uint16_t frame_ms) {
+    if (frame_ms == 0U) {
+        return 0U;
+    }
+    return (uint32_t)frame_ms * RAINBOW_PWM_TICKS_PER_MS - 1U;
+}
+
+uint16_t stock_trail_pwm_compare(uint8_t age) {
+    static const uint16_t compares[BOOT_TRAIL_LENGTH] = {1U, 600U, 880U, 980U};
+    return age < BOOT_TRAIL_LENGTH ? compares[age] : 1000U;
+}
+
 static uint8_t boot_trail_edge(uint8_t start, uint8_t position_count) {
     uint8_t last = (uint8_t)(position_count - 1U);
     return start <= last / 2U ? last : 0U;
@@ -135,20 +147,16 @@ uint8_t boot_trail_position(uint8_t frame, uint8_t start, uint8_t position_count
         : (uint8_t)(bounded - distance);
 }
 
-uint8_t boot_trail_level(uint8_t frame, uint8_t position, uint8_t start, uint8_t position_count) {
-    static const uint8_t levels[BOOT_TRAIL_LENGTH] = {99U, 68U, 42U, 22U};
-    uint8_t level = 0U;
-
+int8_t boot_trail_age(uint8_t frame, uint8_t position, uint8_t start, uint8_t position_count) {
     if (position >= position_count || start >= position_count) {
-        return 0U;
+        return -1;
     }
     for (uint8_t age = 0U; age < BOOT_TRAIL_LENGTH && age <= frame; age++) {
-        if (boot_trail_position((uint8_t)(frame - age), start, position_count) == position &&
-                levels[age] > level) {
-            level = levels[age];
+        if (boot_trail_position((uint8_t)(frame - age), start, position_count) == position) {
+            return (int8_t)age;
         }
     }
-    return level;
+    return -1;
 }
 
 uint8_t stock_sweep_frame_count(uint8_t end) {
@@ -320,11 +328,17 @@ uint8_t charging_particle_cycle_frames(uint8_t percentage, uint8_t position_coun
     if (position_count == 0U || percentage >= 100U) {
         return 1U;
     }
+    uint8_t filled = charging_filled_count(percentage, position_count);
     uint8_t target = charging_particle_target(percentage, position_count);
-    return (uint8_t)(position_count - target + 2U);
+    // Leave exactly two fully dark frames after the four-level trail. At 0%
+    // the head remains visible at slot 1, so that cycle needs one additional
+    // frame before the same two-frame pause begins.
+    return (uint8_t)(
+        position_count - target + BOOT_TRAIL_LENGTH + (filled == 0U ? 1U : 0U)
+    );
 }
 
-int8_t charging_particle_position(uint8_t frame, uint8_t percentage, uint8_t position_count) {
+int8_t charging_particle_position(uint32_t frame, uint8_t percentage, uint8_t position_count) {
     if (position_count == 0U || percentage >= 100U) {
         return -1;
     }
@@ -337,28 +351,21 @@ int8_t charging_particle_position(uint8_t frame, uint8_t percentage, uint8_t pos
     return (int8_t)((position_count - 1U) - bounded);
 }
 
-uint8_t charging_particle_level(
-    uint8_t frame,
+int8_t charging_particle_age(
+    uint32_t frame,
     uint8_t position,
     uint8_t percentage,
     uint8_t position_count
 ) {
-    static const uint8_t levels[BOOT_TRAIL_LENGTH] = {99U, 68U, 42U, 22U};
     uint8_t filled = charging_filled_count(percentage, position_count);
-    uint8_t level = 0U;
-
     if (position >= position_count || position < filled || percentage >= 100U) {
-        return 0U;
+        return -1;
     }
     for (uint8_t age = 0U; age < BOOT_TRAIL_LENGTH && age <= frame; age++) {
-        int8_t particle = charging_particle_position(
-            (uint8_t)(frame - age),
-            percentage,
-            position_count
-        );
-        if (particle == (int8_t)position && levels[age] > level) {
-            level = levels[age];
+        if (charging_particle_position(frame - age, percentage, position_count) ==
+                (int8_t)position) {
+            return (int8_t)age;
         }
     }
-    return level;
+    return -1;
 }

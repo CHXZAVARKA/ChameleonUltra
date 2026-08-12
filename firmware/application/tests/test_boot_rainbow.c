@@ -80,6 +80,20 @@ static void assert_primary_and_secondary_hues(void) {
     assert(magenta.red > 0U && magenta.green == 0U && magenta.blue > 0U);
 }
 
+static void assert_visible_rainbow_profile(void) {
+    assert(RAINBOW_DISPLAY_BRIGHTNESS == 255U);
+    assert(RAINBOW_PWM_TICKS_PER_MS == 16U);
+    assert(rainbow_pwm_repeats(40U) == 639U);
+    assert(rainbow_pwm_repeats(50U) == 799U);
+
+    rainbow_rgb_t red = rainbow_color_at(0U, RAINBOW_DISPLAY_BRIGHTNESS);
+    rainbow_rgb_t green = rainbow_color_at(512U, RAINBOW_DISPLAY_BRIGHTNESS);
+    rainbow_rgb_t blue = rainbow_color_at(1024U, RAINBOW_DISPLAY_BRIGHTNESS);
+    assert(pwm_on_time(red.red) >= 350U);
+    assert(pwm_on_time(green.green) >= 180U);
+    assert(pwm_on_time(blue.blue) >= 950U);
+}
+
 static int8_t brightest_position_for_startup(uint8_t frame, uint8_t slot) {
     for (uint8_t position = 0U; position < 8U; position++) {
         if (stock_full_startup_channel(frame, position, slot, 8U) == 3) {
@@ -163,11 +177,14 @@ static void assert_stock_full_shutdown_contract(void) {
 }
 
 int main(void) {
+    assert_stable_perceived_brightness(RAINBOW_DISPLAY_BRIGHTNESS);
     assert_stable_perceived_brightness(118U);
     assert_stable_perceived_brightness(176U);
+    assert_smooth_channel_transitions(RAINBOW_DISPLAY_BRIGHTNESS);
     assert_smooth_channel_transitions(118U);
     assert_smooth_channel_transitions(176U);
     assert_primary_and_secondary_hues();
+    assert_visible_rainbow_profile();
     assert_stock_full_startup_contract();
     assert_stock_full_shutdown_contract();
 
@@ -183,13 +200,13 @@ int main(void) {
         assert(boot_trail_position(frame, 5U, 8U) == from_slot_6[frame]);
     }
 
-    static const uint8_t forward_levels[] = {22U, 42U, 68U, 99U, 0U, 0U, 0U, 0U};
-    static const uint8_t reversal_levels[] = {0U, 0U, 0U, 0U, 22U, 42U, 68U, 99U};
-    static const uint8_t return_levels[] = {99U, 68U, 42U, 22U, 0U, 0U, 0U, 0U};
+    static const int8_t forward_ages[] = {3, 2, 1, 0, -1, -1, -1, -1};
+    static const int8_t reversal_ages[] = {-1, -1, -1, -1, 3, 2, 1, 0};
+    static const int8_t return_ages[] = {0, 1, 2, 3, -1, -1, -1, -1};
     for (uint8_t position = 0U; position < 8U; position++) {
-        assert(boot_trail_level(3U, position, 0U, 8U) == forward_levels[position]);
-        assert(boot_trail_level(7U, position, 0U, 8U) == reversal_levels[position]);
-        assert(boot_trail_level(14U, position, 0U, 8U) == return_levels[position]);
+        assert(boot_trail_age(3U, position, 0U, 8U) == forward_ages[position]);
+        assert(boot_trail_age(7U, position, 0U, 8U) == reversal_ages[position]);
+        assert(boot_trail_age(14U, position, 0U, 8U) == return_ages[position]);
     }
 
     assert(rainbow_pwm_compare(0U, 1000U) == (0x8000U | 1000U));
@@ -202,23 +219,52 @@ int main(void) {
     assert(charging_filled_count(99U, 8U) == 7U);
     assert(charging_filled_count(100U, 8U) == 8U);
 
-    assert(charging_particle_cycle_frames(65U, 8U) == 6U);
+    assert(CHARGING_PARTICLE_FRAME_MS >= 120U);
+    assert(stock_trail_pwm_compare(0U) == 1U);
+    assert(stock_trail_pwm_compare(1U) == 600U);
+    assert(stock_trail_pwm_compare(2U) == 880U);
+    assert(stock_trail_pwm_compare(3U) == 980U);
+
+    assert(charging_particle_cycle_frames(65U, 8U) == 8U);
     assert(charging_particle_position(0U, 65U, 8U) == 7);
     assert(charging_particle_position(1U, 65U, 8U) == 6);
     assert(charging_particle_position(2U, 65U, 8U) == 5);
     assert(charging_particle_position(3U, 65U, 8U) == 4);
     assert(charging_particle_position(4U, 65U, 8U) == -1);
     assert(charging_particle_position(5U, 65U, 8U) == -1);
-    assert(charging_particle_position(6U, 65U, 8U) == 7);
+    assert(charging_particle_position(6U, 65U, 8U) == -1);
+    assert(charging_particle_position(7U, 65U, 8U) == -1);
+    assert(charging_particle_position(8U, 65U, 8U) == 7);
     assert(charging_particle_position(0U, 100U, 8U) == -1);
 
-    assert(charging_particle_level(0U, 7U, 65U, 8U) == 99U);
-    assert(charging_particle_level(1U, 7U, 65U, 8U) == 68U);
-    assert(charging_particle_level(1U, 6U, 65U, 8U) == 99U);
-    assert(charging_particle_level(3U, 4U, 65U, 8U) == 0U);
-    assert(charging_particle_level(4U, 5U, 65U, 8U) == 42U);
-    assert(charging_particle_level(5U, 5U, 65U, 8U) == 22U);
-    assert(charging_particle_level(5U, 4U, 65U, 8U) == 0U);
+    assert(charging_particle_age(0U, 7U, 65U, 8U) == 0);
+    assert(charging_particle_age(1U, 7U, 65U, 8U) == 1);
+    assert(charging_particle_age(1U, 6U, 65U, 8U) == 0);
+    assert(charging_particle_age(3U, 4U, 65U, 8U) == -1);
+    assert(charging_particle_age(4U, 5U, 65U, 8U) == 2);
+    assert(charging_particle_age(5U, 5U, 65U, 8U) == 3);
+    assert(charging_particle_age(5U, 4U, 65U, 8U) == -1);
+    for (uint8_t position = 0U; position < 8U; position++) {
+        assert(charging_particle_age(6U, position, 65U, 8U) == -1);
+        assert(charging_particle_age(7U, position, 65U, 8U) == -1);
+    }
+    for (uint8_t position = 0U; position < 8U; position++) {
+        assert(charging_particle_age(8U, position, 65U, 8U) ==
+               charging_particle_age(0U, position, 65U, 8U));
+    }
+    assert(charging_particle_cycle_frames(0U, 8U) == 13U);
+    for (uint8_t position = 0U; position < 8U; position++) {
+        assert(charging_particle_age(11U, position, 0U, 8U) == -1);
+        assert(charging_particle_age(12U, position, 0U, 8U) == -1);
+    }
+    // Crossing the former uint8_t boundary must preserve the exact phase and
+    // trail instead of jumping from cycle phase 7 to phase 0.
+    for (uint8_t position = 0U; position < 8U; position++) {
+        assert(charging_particle_age(256U, position, 65U, 8U) ==
+               charging_particle_age(0U, position, 65U, 8U));
+        assert(charging_particle_age(257U, position, 65U, 8U) ==
+               charging_particle_age(1U, position, 65U, 8U));
+    }
     puts("boot rainbow model tests passed");
     return 0;
 }
