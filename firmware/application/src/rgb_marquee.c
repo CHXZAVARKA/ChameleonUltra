@@ -196,7 +196,35 @@ static void battery_indicator_show_level(uint8_t battery_percentage) {
     battery_indicator_last_percentage = battery_percentage;
 }
 
-void rgb_marquee_show_battery(bool measurement_available, uint8_t battery_percentage) {
+static void battery_indicator_show_stock(bool measurement_available, uint8_t battery_percentage) {
+    uint32_t *led_pins = hw_get_led_array();
+
+    rgb_marquee_stop();
+    if (!measurement_available) {
+        set_slot_light_color(RGB_RED);
+        for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+            nrf_gpio_pin_clear(led_pins[position]);
+        }
+        bsp_delay_ms(BATTERY_WAIT_FRAME_MS);
+        for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+            nrf_gpio_pin_set(led_pins[position]);
+        }
+        bsp_delay_ms(BATTERY_WAIT_FRAME_MS);
+        return;
+    }
+
+    uint8_t lit_count = battery_indicator_lit_count(battery_percentage, RGB_LIST_NUM);
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        nrf_gpio_pin_clear(led_pins[position]);
+    }
+    set_slot_light_color(RGB_CYAN);
+    for (uint8_t position = 0U; position < lit_count; position++) {
+        nrf_gpio_pin_set(led_pins[position]);
+        bsp_delay_ms(50);
+    }
+}
+
+static void battery_indicator_show_long_b(bool measurement_available, uint8_t battery_percentage) {
     uint32_t *led_pins = hw_get_led_array();
 
     if (measurement_available) {
@@ -206,7 +234,6 @@ void rgb_marquee_show_battery(bool measurement_available, uint8_t battery_percen
         }
         return;
     }
-
     if (battery_indicator_state == BATTERY_INDICATOR_IDLE ||
             battery_indicator_state == BATTERY_INDICATOR_LEVEL) {
         rgb_marquee_stop();
@@ -234,6 +261,18 @@ void rgb_marquee_show_battery(bool measurement_available, uint8_t battery_percen
         ? BATTERY_INDICATOR_WAIT_ON
         : BATTERY_INDICATOR_WAIT_OFF;
     bsp_set_timer(charging_timer, 0U);
+}
+
+void rgb_marquee_show_battery(
+    rgb_battery_trigger_t trigger,
+    bool measurement_available,
+    uint8_t battery_percentage
+) {
+    if (trigger == RGB_BATTERY_TRIGGER_LONG_B) {
+        battery_indicator_show_long_b(measurement_available, battery_percentage);
+    } else {
+        battery_indicator_show_stock(measurement_available, battery_percentage);
+    }
 }
 
 static void pwm_position_channel_set(uint8_t channel, uint16_t duty) {

@@ -11,12 +11,21 @@ typedef enum {
     RGB_LED_OWNER_USB_REMOVED = 1U << 3U,
 } rgb_led_owner_t;
 
+typedef enum {
+    RGB_BATTERY_TRIGGER_OTHER_MAPPING,
+    RGB_BATTERY_TRIGGER_LONG_B,
+} rgb_battery_trigger_t;
+
 void rgb_marquee_init(void);
 void rgb_marquee_stop(void);
 void rgb_marquee_reset(void);
 bool rgb_marquee_is_enabled(void);
 void rgb_marquee_boot_rainbow_trail(uint8_t slot, uint8_t final_color);
-void rgb_marquee_show_battery(bool measurement_available, uint8_t battery_percentage);
+void rgb_marquee_show_battery(
+    rgb_battery_trigger_t trigger,
+    bool measurement_available,
+    uint8_t battery_percentage
+);
 void rgb_marquee_full_startup_rainbow(uint8_t slot, uint8_t final_color);
 bool rgb_marquee_full_shutdown_begin(uint8_t slot);
 bool rgb_marquee_full_shutdown_move_to_edge(uint8_t start, uint8_t stop);

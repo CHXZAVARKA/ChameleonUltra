@@ -15,6 +15,7 @@ SRC_FILES += \
   $(PROJ_DIR)/settings.c \
   $(PROJ_DIR)/usb_main.c \
   $(PROJ_DIR)/rgb_marquee.c \
+  $(PROJ_DIR)/rgb/battery_button.c \
   $(PROJ_DIR)/rgb/battery_indicator.c \
   $(PROJ_DIR)/rgb/rainbow_color.c \
   $(PROJ_DIR)/bsp/bsp_delay.c \

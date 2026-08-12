@@ -39,6 +39,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "tag_emulation.h"
 #include "usb_main.h"
 #include "rgb_marquee.h"
+#include "rgb/battery_button.h"
 #include "tag_persistence.h"
 #include "settings.h"
 
@@ -60,7 +61,7 @@ static bool m_is_a_btn_press = false;
 
 static bool m_is_b_btn_release = false;
 static bool m_is_a_btn_release = false;
-static bool m_is_b_battery_indicator_active = false;
+static battery_button_state_t m_b_battery_button = {false};
 
 static bool m_system_off_processing = false;
 
@@ -214,7 +215,9 @@ static void timer_button_event_handle(void *arg) {
     if (nrf_gpio_pin_read(pin) == 1) {
         if (pin == BUTTON_1) {
             // If button is disabled, we can't dispatch key event.
-            if (settings_get_button_press_config('b') != SettingsButtonDisable) {
+            if (battery_button_input_enabled(
+                    settings_get_button_press_config('b') != SettingsButtonDisable,
+                    settings_get_long_button_press_config('b') != SettingsButtonDisable)) {
                 NRF_LOG_INFO("BUTTON_B_PRESS");
                 m_is_b_btn_press = true;
                 m_last_btn_press = app_timer_cnt_get();
@@ -237,7 +240,9 @@ static void timer_button_event_handle(void *arg) {
 
         if (pin == BUTTON_1 && m_is_b_btn_press == true) {
             // If button is disabled, we can't dispatch key event.
-            if (settings_get_button_press_config('b') != SettingsButtonDisable) {
+            if (battery_button_input_enabled(
+                    settings_get_button_press_config('b') != SettingsButtonDisable,
+                    settings_get_long_button_press_config('b') != SettingsButtonDisable)) {
                 m_is_b_btn_release = true;
                 m_is_b_btn_press = false;
                 if (!is_long_press) {
@@ -619,36 +624,6 @@ static void cycle_slot(bool dec) {
     apply_slot_change(slot_now, slot_new);
 }
 
-static void show_battery_stock(void) {
-    rgb_marquee_stop();
-    uint32_t *led_pins = hw_get_led_array();
-    // if still in the first 4s after boot, blink red while waiting for battery info
-    while (percentage_batt_lvl == 0) {
-        for (int i = 0; i < RGB_LIST_NUM; i++) {
-            nrf_gpio_pin_clear(led_pins[i]);
-        }
-        bsp_delay_ms(100);
-        set_slot_light_color(RGB_RED);
-        for (int i = 0; i < RGB_LIST_NUM; i++) {
-            nrf_gpio_pin_set(led_pins[i]);
-        }
-        bsp_delay_ms(100);
-    }
-    // ok we have data, show level with cyan LEDs
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        nrf_gpio_pin_clear(led_pins[i]);
-    }
-    set_slot_light_color(RGB_CYAN);
-    uint8_t nleds = (percentage_batt_lvl * 2) / 25; // 0->7 (8 for 100% but this is ignored)
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        if (i <= nleds) {
-            nrf_gpio_pin_set(led_pins[i]);
-            bsp_delay_ms(50);
-        }
-    }
-    // nothing special to finish, we wait for sleep or slot change
-}
-
 #if defined(PROJECT_CHAMELEON_ULTRA)
 
 static void offline_status_blink_color(uint8_t blink_color) {
@@ -935,7 +910,11 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
 #endif
 
         case SettingsButtonShowBattery:
-            show_battery_stock();
+            rgb_marquee_show_battery(
+                RGB_BATTERY_TRIGGER_OTHER_MAPPING,
+                battery_level_is_available(),
+                percentage_batt_lvl
+            );
             break;
 
         default:
@@ -949,16 +928,28 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
 static void button_press_process(void) {
     bool b_long_shows_battery =
         settings_get_long_button_press_config('b') == SettingsButtonShowBattery;
-    if (m_is_b_btn_press && b_long_shows_battery) {
-        uint32_t now = app_timer_cnt_get();
-        uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press);
-        if (!m_is_b_battery_indicator_active && ticks > APP_TIMER_TICKS(1000)) {
-            m_is_b_battery_indicator_active = true;
-            g_usb_led_marquee_enable = false;
-        }
-        if (m_is_b_battery_indicator_active) {
-            rgb_marquee_show_battery(battery_level_is_available(), percentage_batt_lvl);
-        }
+    uint32_t now = app_timer_cnt_get();
+    uint32_t held_ticks = app_timer_cnt_diff_compute(now, m_last_btn_press);
+    battery_button_action_t battery_action = battery_button_update(
+        &m_b_battery_button,
+        m_is_b_btn_press,
+        m_is_b_btn_release,
+        b_long_shows_battery,
+        held_ticks,
+        APP_TIMER_TICKS(1000)
+    );
+    if (battery_action == BATTERY_BUTTON_SHOW) {
+        g_usb_led_marquee_enable = false;
+        rgb_marquee_show_battery(
+            RGB_BATTERY_TRIGGER_LONG_B,
+            battery_level_is_available(),
+            percentage_batt_lvl
+        );
+    } else if (battery_action == BATTERY_BUTTON_RESTORE) {
+        rgb_marquee_stop();
+        uint8_t slot = tag_emulation_get_slot();
+        set_slot_light_color(get_color_by_slot(slot));
+        light_up_by_slot();
     }
 
     // Make sure that one of the AB buttons has a click event
@@ -972,16 +963,12 @@ static void button_press_process(void) {
             m_is_a_btn_release = false;
         }
         if (m_is_b_btn_release) {
-            if (m_is_btn_long_press && b_long_shows_battery) {
-                rgb_marquee_stop();
-                uint8_t slot = tag_emulation_get_slot();
-                set_slot_light_color(get_color_by_slot(slot));
-                light_up_by_slot();
-                m_is_b_battery_indicator_active = false;
-            } else if (!m_is_btn_long_press) {
-                run_button_function_by_settings(settings_get_button_press_config('b'));
-            } else {
-                run_button_function_by_settings(settings_get_long_button_press_config('b'));
+            if (!(m_is_btn_long_press && b_long_shows_battery)) {
+                if (!m_is_btn_long_press) {
+                    run_button_function_by_settings(settings_get_button_press_config('b'));
+                } else {
+                    run_button_function_by_settings(settings_get_long_button_press_config('b'));
+                }
             }
             m_is_b_btn_release = false;
         }
