@@ -16,7 +16,7 @@ void rgb_marquee_stop(void);
 void rgb_marquee_reset(void);
 bool rgb_marquee_is_enabled(void);
 void rgb_marquee_boot_rainbow_trail(uint8_t slot, uint8_t final_color);
-void rgb_marquee_show_battery(uint8_t battery_percentage);
+void rgb_marquee_show_battery(bool measurement_available, uint8_t battery_percentage);
 void rgb_marquee_full_startup_rainbow(uint8_t slot, uint8_t final_color);
 bool rgb_marquee_full_shutdown_begin(uint8_t slot);
 bool rgb_marquee_full_shutdown_move_to_edge(uint8_t start, uint8_t stop);

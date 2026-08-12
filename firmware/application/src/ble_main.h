@@ -9,6 +9,8 @@
 extern uint16_t batt_lvl_in_milli_volts;
 extern uint8_t percentage_batt_lvl;
 
+bool battery_level_is_available(void);
+
 typedef void (*lf_adc_callback_t)(nrf_saadc_value_t *, size_t);
 
 void ble_slave_init(void);

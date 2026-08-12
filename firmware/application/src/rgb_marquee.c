@@ -28,6 +28,13 @@ NRF_LOG_MODULE_REGISTER();
 #define CHARGING_RAINBOW_FRAME_COUNT 48U
 #define CHARGING_RAINBOW_FRAME_REPEATS 32U
 #define CHARGING_PARTICLE_FRAME_MS 90U
+#define BATTERY_WAIT_FRAME_MS 100U
+typedef enum {
+    BATTERY_INDICATOR_IDLE,
+    BATTERY_INDICATOR_WAIT_OFF,
+    BATTERY_INDICATOR_WAIT_ON,
+    BATTERY_INDICATOR_LEVEL,
+} battery_indicator_state_t;
 static nrf_drv_pwm_t pwm0_ins = NRF_DRV_PWM_INSTANCE(1);
 static nrf_drv_pwm_t boot_rgb_pwm_ins = NRF_DRV_PWM_INSTANCE(2);
 static bool boot_rgb_pwm_initialized = false;
@@ -70,6 +77,8 @@ static uint8_t rgb_marquee_usb_open_step = 0;
 static nrf_pwm_sequence_t motion_rgb_sequence;
 static nrf_pwm_sequence_t charging_rgb_sequence;
 static nrf_atomic_u32_t usb_animation_owners = 0U;
+static battery_indicator_state_t battery_indicator_state = BATTERY_INDICATOR_IDLE;
+static uint8_t battery_indicator_last_percentage = 0xFFU;
 extern bool g_usb_led_marquee_enable;
 
 static uint16_t get_pwmduty(uint8_t light_level);
@@ -131,6 +140,8 @@ void rgb_marquee_stop(void) {
     charging_particle_frame = 0U;
     charging_last_percentage = 0xFFU;
     rgb_marquee_usb_open_step = 0;
+    battery_indicator_state = BATTERY_INDICATOR_IDLE;
+    battery_indicator_last_percentage = 0xFFU;
 }
 
 static void rainbow_prepare_colors(uint8_t frame_count, uint8_t brightness) {
@@ -159,7 +170,7 @@ static bool rainbow_start_color_layer(uint8_t frame_count, uint8_t frame_ms, uin
     return true;
 }
 
-void rgb_marquee_show_battery(uint8_t battery_percentage) {
+static void battery_indicator_show_level(uint8_t battery_percentage) {
     battery_indicator_rgb_t color = battery_indicator_color(battery_percentage);
     uint8_t lit_count = battery_indicator_lit_count(battery_percentage, RGB_LIST_NUM);
     uint32_t *led_pins = hw_get_led_array();
@@ -181,6 +192,48 @@ void rgb_marquee_show_battery(uint8_t battery_percentage) {
         nrf_gpio_pin_set(led_pins[position]);
         bsp_delay_ms(50);
     }
+    battery_indicator_state = BATTERY_INDICATOR_LEVEL;
+    battery_indicator_last_percentage = battery_percentage;
+}
+
+void rgb_marquee_show_battery(bool measurement_available, uint8_t battery_percentage) {
+    uint32_t *led_pins = hw_get_led_array();
+
+    if (measurement_available) {
+        if (battery_indicator_state != BATTERY_INDICATOR_LEVEL ||
+                battery_percentage != battery_indicator_last_percentage) {
+            battery_indicator_show_level(battery_percentage);
+        }
+        return;
+    }
+
+    if (battery_indicator_state == BATTERY_INDICATOR_IDLE ||
+            battery_indicator_state == BATTERY_INDICATOR_LEVEL) {
+        rgb_marquee_stop();
+        set_slot_light_color(RGB_RED);
+        for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+            nrf_gpio_pin_clear(led_pins[position]);
+        }
+        battery_indicator_state = BATTERY_INDICATOR_WAIT_OFF;
+        bsp_set_timer(charging_timer, 0U);
+        return;
+    }
+    if (NO_TIMEOUT_1MS(charging_timer, BATTERY_WAIT_FRAME_MS)) {
+        return;
+    }
+
+    bool turn_on = battery_indicator_state == BATTERY_INDICATOR_WAIT_OFF;
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        if (turn_on) {
+            nrf_gpio_pin_set(led_pins[position]);
+        } else {
+            nrf_gpio_pin_clear(led_pins[position]);
+        }
+    }
+    battery_indicator_state = turn_on
+        ? BATTERY_INDICATOR_WAIT_ON
+        : BATTERY_INDICATOR_WAIT_OFF;
+    bsp_set_timer(charging_timer, 0U);
 }
 
 static void pwm_position_channel_set(uint8_t channel, uint16_t duty) {
