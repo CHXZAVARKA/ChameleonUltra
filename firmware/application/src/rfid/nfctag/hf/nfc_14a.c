@@ -652,7 +652,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
 
             g_is_tag_emulating = true;
             g_usb_led_marquee_enable = false;
-            rgb_marquee_usb_suspend();
+            rgb_marquee_usb_suspend(RGB_LED_OWNER_HF);
 
             set_slot_light_color(RGB_GREEN);
             TAG_FIELD_LED_ON()
@@ -675,6 +675,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
         }
         case NRFX_NFCT_EVT_FIELD_LOST: {
             g_is_tag_emulating = false;
+            rgb_marquee_usb_resume(RGB_LED_OWNER_HF);
             // call sleep_timer_start *after* unsetting g_is_tag_emulating
             sleep_timer_start(SLEEP_DELAY_MS_FIELD_NFC_LOST);
 
@@ -807,7 +808,7 @@ void nfc_tag_14a_sense_switch(bool enable) {
             m_nfc_sense_state = NFC_SENSE_STATE_DISABLE;
             g_is_tag_emulating = false;
             g_usb_led_marquee_enable = false;
-            rgb_marquee_usb_suspend();
+            rgb_marquee_usb_suspend(RGB_LED_OWNER_HF);
             //Directly anti -initialization NFC peripherals can turn off NFC field induction
             // SDK inside us to call us nrfx_nfct_disable
             nrfx_nfct_uninit();

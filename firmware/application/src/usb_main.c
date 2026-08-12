@@ -109,7 +109,7 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
                 app_usbd_enable();
             }
             g_usb_led_marquee_enable = true;
-            rgb_marquee_usb_resume();
+            rgb_marquee_usb_resume(RGB_LED_OWNER_USB_REMOVED);
             break;
 
         case APP_USBD_EVT_POWER_REMOVED:
@@ -117,7 +117,7 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
             NRF_LOG_INFO("USB power removed");
             g_usb_connected = false;
             g_usb_led_marquee_enable = false;
-            rgb_marquee_usb_suspend();
+            rgb_marquee_usb_suspend(RGB_LED_OWNER_USB_REMOVED);
             app_usbd_stop();
             break;
 
@@ -125,7 +125,7 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
             NRF_LOG_INFO("USB ready");
             g_usb_connected = true;
             g_usb_led_marquee_enable = true;
-            rgb_marquee_usb_resume();
+            rgb_marquee_usb_resume(RGB_LED_OWNER_USB_REMOVED);
             app_usbd_start();
             break;
 
