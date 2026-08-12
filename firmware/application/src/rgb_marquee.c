@@ -1,9 +1,11 @@
 #include "math.h"
+#include "app_error.h"
 #include "nrf_gpio.h"
 #include "hw_connect.h"
 #include "bsp_delay.h"
 #include "rgb_marquee.h"
 #include "bsp_time.h"
+#include "rgb/rainbow_color.h"
 
 
 #define NRF_LOG_MODULE_NAME rgb
@@ -15,7 +17,12 @@ NRF_LOG_MODULE_REGISTER();
 
 #define PWM_MAX 1000 // PWM Maximum
 #define LIGHT_LEVEL_MAX 99 // The maximum value of brightness level
+#define BOOT_RAINBOW_BRIGHTNESS 176U
+#define BOOT_RAINBOW_FRAME_MS 40U
+#define BOOT_RAINBOW_MAX_FRAMES 15U
 static nrf_drv_pwm_t pwm0_ins = NRF_DRV_PWM_INSTANCE(1);
+static nrf_drv_pwm_t boot_rgb_pwm_ins = NRF_DRV_PWM_INSTANCE(2);
+static bool boot_rgb_pwm_initialized = false;
 nrf_pwm_values_individual_t pwm_sequ_val; // PWM control 4 channels in the independent mode
 nrf_pwm_sequence_t const seq = { //Configure the structure of PWM output
     .values.p_individual = &pwm_sequ_val,
@@ -31,11 +38,28 @@ nrf_drv_pwm_config_t pwm_config = {//PWM configuration structure
     .load_mode = NRF_PWM_LOAD_INDIVIDUAL, // 4 channels for four values
     .step_mode = NRF_PWM_STEP_AUTO
 };
+static nrf_pwm_values_individual_t boot_rgb_frames[BOOT_RAINBOW_MAX_FRAMES];
+static nrf_drv_pwm_config_t boot_rgb_pwm_config = {
+    .output_pins = {
+        NRF_DRV_PWM_PIN_NOT_USED,
+        NRF_DRV_PWM_PIN_NOT_USED,
+        NRF_DRV_PWM_PIN_NOT_USED,
+        NRF_DRV_PWM_PIN_NOT_USED,
+    },
+    .irq_priority = APP_IRQ_PRIORITY_LOWEST,
+    .base_clock = NRF_PWM_CLK_1MHz,
+    .count_mode = NRF_PWM_MODE_UP,
+    .top_value = PWM_MAX,
+    .load_mode = NRF_PWM_LOAD_INDIVIDUAL,
+    .step_mode = NRF_PWM_STEP_AUTO,
+};
 static autotimer *timer;
 static uint8_t rgb_marquee_usb_idle_step = 0;
 static uint8_t rgb_marquee_usb_idle_color = RGB_RED;
 static uint8_t rgb_marquee_usb_open_step = 0;
 extern bool g_usb_led_marquee_enable;
+
+static uint16_t get_pwmduty(uint8_t light_level);
 
 
 void rgb_marquee_init(void) {
@@ -43,10 +67,111 @@ void rgb_marquee_init(void) {
 }
 
 void rgb_marquee_stop(void) {
+    if (boot_rgb_pwm_initialized) {
+        nrfx_pwm_stop(&boot_rgb_pwm_ins, true);
+        nrfx_pwm_uninit(&boot_rgb_pwm_ins);
+        boot_rgb_pwm_initialized = false;
+    }
     nrfx_pwm_stop(&pwm0_ins, true);
     nrfx_pwm_uninit(&pwm0_ins);//turn off pwm output
     rgb_marquee_usb_idle_step = 0;
     rgb_marquee_usb_open_step = 0;
+}
+
+static void boot_rainbow_prepare_colors(uint8_t frame_count) {
+    for (uint8_t frame = 0U; frame < frame_count; frame++) {
+        uint16_t phase = (uint16_t)(((uint32_t)frame * RAINBOW_PHASE_CYCLE) / frame_count);
+        rainbow_rgb_t color = rainbow_color_at(phase, BOOT_RAINBOW_BRIGHTNESS);
+        boot_rgb_frames[frame].channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
+        boot_rgb_frames[frame].channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
+        boot_rgb_frames[frame].channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
+        boot_rgb_frames[frame].channel_3 = rainbow_pwm_compare(0U, PWM_MAX);
+    }
+}
+
+static void boot_rainbow_show_trail(uint8_t frame, uint8_t slot) {
+    uint32_t *led_pins = hw_get_led_array();
+    uint8_t channel = 0U;
+
+    for (uint8_t index = 0U; index < 4U; index++) {
+        pwm_config.output_pins[index] = NRF_DRV_PWM_PIN_NOT_USED;
+    }
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        uint8_t level = boot_trail_level(frame, position, slot, RGB_LIST_NUM);
+        if (level == 0U) {
+            continue;
+        }
+        pwm_config.output_pins[channel] = led_pins[position];
+        switch (channel) {
+            case 0U:
+                pwm_sequ_val.channel_0 = get_pwmduty(level);
+                break;
+            case 1U:
+                pwm_sequ_val.channel_1 = get_pwmduty(level);
+                break;
+            case 2U:
+                pwm_sequ_val.channel_2 = get_pwmduty(level);
+                break;
+            default:
+                pwm_sequ_val.channel_3 = get_pwmduty(level);
+                break;
+        }
+        channel++;
+        if (channel == BOOT_TRAIL_LENGTH) {
+            break;
+        }
+    }
+
+    nrfx_pwm_uninit(&pwm0_ins);
+    APP_ERROR_CHECK(nrf_drv_pwm_init(&pwm0_ins, &pwm_config, NULL));
+    nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+}
+
+void rgb_marquee_boot_rainbow_trail(uint8_t slot, uint8_t final_color) {
+    uint32_t *led_pins = hw_get_led_array();
+    uint8_t frame_count = boot_trail_frame_count(slot, RGB_LIST_NUM);
+    if (frame_count > BOOT_RAINBOW_MAX_FRAMES) {
+        frame_count = BOOT_RAINBOW_MAX_FRAMES;
+    }
+
+    rgb_marquee_stop();
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        nrf_gpio_pin_clear(led_pins[position]);
+    }
+
+    boot_rainbow_prepare_colors(frame_count);
+    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    nrf_pwm_sequence_t boot_rgb_sequence = {
+        .values.p_individual = boot_rgb_frames,
+        .length = (uint16_t)(frame_count * 4U),
+        .repeats = BOOT_RAINBOW_FRAME_MS - 1U,
+        .end_delay = 0U,
+    };
+    APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
+    boot_rgb_pwm_initialized = true;
+    nrf_drv_pwm_simple_playback(
+        &boot_rgb_pwm_ins,
+        &boot_rgb_sequence,
+        1,
+        NRF_DRV_PWM_FLAG_STOP
+    );
+
+    for (uint8_t frame = 0U; frame < frame_count; frame++) {
+        boot_rainbow_show_trail(frame, slot);
+        bsp_delay_ms(BOOT_RAINBOW_FRAME_MS);
+    }
+
+    rgb_marquee_stop();
+    set_slot_light_color(final_color);
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        if (position == slot) {
+            nrf_gpio_pin_set(led_pins[position]);
+        } else {
+            nrf_gpio_pin_clear(led_pins[position]);
+        }
+    }
 }
 
 // reset RGB state machines to force a refresh of the LED color
@@ -56,7 +181,7 @@ void rgb_marquee_reset(void) {
 }
 
 // Brightness to PWM value
-uint16_t get_pwmduty(uint8_t light_level) {
+static uint16_t get_pwmduty(uint8_t light_level) {
     return PWM_MAX - (PWM_MAX * pow(((double)light_level / LIGHT_LEVEL_MAX), 2.2));
 }
 
