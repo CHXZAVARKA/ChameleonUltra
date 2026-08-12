@@ -47,7 +47,7 @@ typedef struct {
  */
 #define TAG_SLOT_CONFIG_CURRENT_VERSION 9
 // Intended struct size, for static assert
-#define TAG_SLOT_CONFIG_CURRENT_SIZE 76
+#define TAG_SLOT_CONFIG_CURRENT_SIZE 68
 
 typedef struct {
     // Basic configuration
@@ -58,6 +58,9 @@ typedef struct {
         // Individual slot configuration
         uint32_t enabled_hf : 1;  // Whether to enable the HF card
         uint32_t enabled_lf : 1;  // Whether to enable the LF card
+        // v8 stored zeros in these reserved bits. v9 reuses three of them for
+        // the stable FDS record that owns this logical slot's whole bundle.
+        uint32_t storage_slot : 3;
         uint32_t : 0;             // U32 align
         // Specific type of emulated card
         union {
@@ -69,9 +72,6 @@ typedef struct {
             tag_specific_type_t tag_lf;
         };
     } slots[TAG_MAX_SLOT_NUM];
-    // Logical slots point at stable FDS records. Swapping this map moves every
-    // dump, nickname and tag-family-specific field in one config transaction.
-    uint8_t storage_slots[TAG_MAX_SLOT_NUM];
 } PACKED tag_slot_config_t;
 
 // Use the macro to check the struct size

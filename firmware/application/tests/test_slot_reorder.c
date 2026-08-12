@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -47,11 +48,11 @@ static tag_slot_config_t make_config(uint8_t active_slot) {
     tag_slot_config_t config = {
         .version = TAG_SLOT_CONFIG_CURRENT_VERSION,
         .active_slot = active_slot,
-        .storage_slots = {0, 1, 2, 3, 4, 5, 6, 7},
     };
     for (uint8_t i = 0; i < TAG_MAX_SLOT_NUM; i++) {
         config.slots[i].enabled_hf = (i & 1u) != 0;
         config.slots[i].enabled_lf = (i & 2u) != 0;
+        config.slots[i].storage_slot = i;
         config.slots[i].tag_hf = (tag_specific_type_t)(TAG_TYPE_MIFARE_1024 + i);
         config.slots[i].tag_lf = (tag_specific_type_t)(TAG_TYPE_EM410X + i);
     }
@@ -62,7 +63,8 @@ static void assert_slot_equal(const tag_slot_config_t *left, uint8_t left_slot,
                               const tag_slot_config_t *right, uint8_t right_slot) {
     assert(memcmp(&left->slots[left_slot], &right->slots[right_slot],
                   sizeof(left->slots[0])) == 0);
-    assert(left->storage_slots[left_slot] == right->storage_slots[right_slot]);
+    assert(tag_slot_config_storage_slot(left, left_slot) ==
+           tag_slot_config_storage_slot(right, right_slot));
 }
 
 static void test_complete_bundle_and_source_active_follow_swap(void) {
@@ -98,14 +100,37 @@ static void test_every_supported_tag_family_uses_the_same_bundle_mapping(void) {
 }
 
 static void test_v8_migration_initializes_identity_storage_map(void) {
-    tag_slot_config_t config = {0};
-    memset(config.storage_slots, 0xff, sizeof(config.storage_slots));
+    tag_slot_config_t config = make_config(0);
+    config.version = 8;
+    for (uint8_t slot = 0; slot < TAG_MAX_SLOT_NUM; slot++) {
+        config.slots[slot].storage_slot = 0;
+    }
+    config.slots[7].enabled_hf = false;
+    config.slots[7].tag_hf = TAG_TYPE_UNDEFINED;
 
-    tag_slot_config_initialize_storage_map(&config);
+    tag_slot_config_t before = config;
+
+    assert(sizeof(config) == 68);
+    assert(offsetof(tag_slot_config_t, slots) == 4);
+    assert(offsetof(tag_slot_config_t, slots[0].U16_tag_hf) == 8);
+    assert(offsetof(tag_slot_config_t, slots[0].U16_tag_lf) == 10);
+    assert(offsetof(tag_slot_config_t, slots[7].U16_tag_hf) == 64);
+    assert(offsetof(tag_slot_config_t, slots[7].U16_tag_lf) == 66);
+
+    tag_slot_config_migrate_v8_to_current(&config);
+
+    assert(config.version == TAG_SLOT_CONFIG_CURRENT_VERSION);
 
     for (uint8_t slot = 0; slot < TAG_MAX_SLOT_NUM; slot++) {
         assert(tag_slot_config_storage_slot(&config, slot) == slot);
+        assert(config.slots[slot].enabled_hf == before.slots[slot].enabled_hf);
+        assert(config.slots[slot].enabled_lf == before.slots[slot].enabled_lf);
+        assert(config.slots[slot].tag_hf == before.slots[slot].tag_hf);
+        assert(config.slots[slot].tag_lf == before.slots[slot].tag_lf);
     }
+
+    assert(config.slots[7].tag_hf == TAG_TYPE_UNDEFINED);
+    assert(!config.slots[7].enabled_hf);
 }
 
 static void test_target_active_follows_swap(void) {

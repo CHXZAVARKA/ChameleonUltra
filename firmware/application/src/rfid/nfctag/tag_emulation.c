@@ -70,16 +70,15 @@ static tag_slot_config_t slotConfig ALIGN_U32 = {
     // Configuration card slots
     // See tag_emulation_factory_init for actual tag content
     .slots = {
-        { .enabled_hf = true,  .enabled_lf = true,  .tag_hf = TAG_TYPE_MIFARE_1024, .tag_lf = TAG_TYPE_EM410X,    },  // 1
-        { .enabled_hf = true,  .enabled_lf = false, .tag_hf = TAG_TYPE_MF0ICU1,     .tag_lf = TAG_TYPE_UNDEFINED, },  // 2
-        { .enabled_hf = false, .enabled_lf = true,  .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_EM410X,    },  // 3
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 4
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 5
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 6
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 7
-        { .enabled_hf = false, .enabled_lf = false, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 8
+        { .enabled_hf = true,  .enabled_lf = true,  .storage_slot = 0, .tag_hf = TAG_TYPE_MIFARE_1024, .tag_lf = TAG_TYPE_EM410X,    },  // 1
+        { .enabled_hf = true,  .enabled_lf = false, .storage_slot = 1, .tag_hf = TAG_TYPE_MF0ICU1,     .tag_lf = TAG_TYPE_UNDEFINED, },  // 2
+        { .enabled_hf = false, .enabled_lf = true,  .storage_slot = 2, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_EM410X,    },  // 3
+        { .enabled_hf = false, .enabled_lf = false, .storage_slot = 3, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 4
+        { .enabled_hf = false, .enabled_lf = false, .storage_slot = 4, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 5
+        { .enabled_hf = false, .enabled_lf = false, .storage_slot = 5, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 6
+        { .enabled_hf = false, .enabled_lf = false, .storage_slot = 6, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 7
+        { .enabled_hf = false, .enabled_lf = false, .storage_slot = 7, .tag_hf = TAG_TYPE_UNDEFINED,   .tag_lf = TAG_TYPE_UNDEFINED, },  // 8
     },
-    .storage_slots = {0, 1, 2, 3, 4, 5, 6, 7},
 };
 // The card slot configuration unique CRC, once the slot configuration changes, can be checked by CRC
 static uint16_t m_slot_config_crc;
@@ -474,8 +473,7 @@ static void tag_emulation_migrate_slot_config_v0_to_v8(void) {
 }
 
 static void tag_emulation_migrate_slot_config_v8_to_v9(void) {
-    slotConfig.version = TAG_SLOT_CONFIG_CURRENT_VERSION;
-    tag_slot_config_initialize_storage_map(&slotConfig);
+    tag_slot_config_migrate_v8_to_current(&slotConfig);
 }
 
 static void tag_emulation_migrate_slot_config(void) {

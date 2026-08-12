@@ -10,6 +10,7 @@ typedef bool (*tag_slot_config_commit_t)(const tag_slot_config_t *config, void *
 
 uint8_t tag_slot_config_storage_slot(const tag_slot_config_t *config, uint8_t logical_slot);
 void tag_slot_config_initialize_storage_map(tag_slot_config_t *config);
+void tag_slot_config_migrate_v8_to_current(tag_slot_config_t *config);
 
 /**
  * Atomically publish a whole-slot swap through the supplied commit function.
