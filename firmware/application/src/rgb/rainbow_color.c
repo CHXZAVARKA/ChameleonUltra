@@ -133,3 +133,65 @@ uint8_t boot_trail_level(uint8_t frame, uint8_t position, uint8_t start, uint8_t
     }
     return level;
 }
+
+uint8_t charging_filled_count(uint8_t percentage, uint8_t position_count) {
+    if (position_count == 0U) {
+        return 0U;
+    }
+    if (percentage >= 100U) {
+        return position_count;
+    }
+    return (uint8_t)(((uint16_t)percentage * position_count) / 100U);
+}
+
+static uint8_t charging_particle_target(uint8_t percentage, uint8_t position_count) {
+    uint8_t filled = charging_filled_count(percentage, position_count);
+    return filled == 0U ? 0U : (uint8_t)(filled - 1U);
+}
+
+uint8_t charging_particle_cycle_frames(uint8_t percentage, uint8_t position_count) {
+    if (position_count == 0U || percentage >= 100U) {
+        return 1U;
+    }
+    uint8_t target = charging_particle_target(percentage, position_count);
+    return (uint8_t)(position_count - target + 2U);
+}
+
+int8_t charging_particle_position(uint8_t frame, uint8_t percentage, uint8_t position_count) {
+    if (position_count == 0U || percentage >= 100U) {
+        return -1;
+    }
+    uint8_t target = charging_particle_target(percentage, position_count);
+    uint8_t travel_frames = (uint8_t)(position_count - target);
+    uint8_t bounded = (uint8_t)(frame % charging_particle_cycle_frames(percentage, position_count));
+    if (bounded >= travel_frames) {
+        return -1;
+    }
+    return (int8_t)((position_count - 1U) - bounded);
+}
+
+uint8_t charging_particle_level(
+    uint8_t frame,
+    uint8_t position,
+    uint8_t percentage,
+    uint8_t position_count
+) {
+    static const uint8_t levels[BOOT_TRAIL_LENGTH] = {99U, 68U, 42U, 22U};
+    uint8_t filled = charging_filled_count(percentage, position_count);
+    uint8_t level = 0U;
+
+    if (position >= position_count || position < filled || percentage >= 100U) {
+        return 0U;
+    }
+    for (uint8_t age = 0U; age < BOOT_TRAIL_LENGTH && age <= frame; age++) {
+        int8_t particle = charging_particle_position(
+            (uint8_t)(frame - age),
+            percentage,
+            position_count
+        );
+        if (particle == (int8_t)position && levels[age] > level) {
+            level = levels[age];
+        }
+    }
+    return level;
+}

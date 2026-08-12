@@ -1,5 +1,6 @@
 #include "math.h"
 #include "app_error.h"
+#include "app_util_platform.h"
 #include "nrf_gpio.h"
 #include "hw_connect.h"
 #include "bsp_delay.h"
@@ -20,6 +21,10 @@ NRF_LOG_MODULE_REGISTER();
 #define BOOT_RAINBOW_BRIGHTNESS 176U
 #define BOOT_RAINBOW_FRAME_MS 40U
 #define BOOT_RAINBOW_MAX_FRAMES 15U
+#define CHARGING_RAINBOW_BRIGHTNESS 118U
+#define CHARGING_RAINBOW_FRAME_COUNT 48U
+#define CHARGING_RAINBOW_FRAME_REPEATS 32U
+#define CHARGING_PARTICLE_FRAME_MS 90U
 static nrf_drv_pwm_t pwm0_ins = NRF_DRV_PWM_INSTANCE(1);
 static nrf_drv_pwm_t boot_rgb_pwm_ins = NRF_DRV_PWM_INSTANCE(2);
 static bool boot_rgb_pwm_initialized = false;
@@ -38,7 +43,7 @@ nrf_drv_pwm_config_t pwm_config = {//PWM configuration structure
     .load_mode = NRF_PWM_LOAD_INDIVIDUAL, // 4 channels for four values
     .step_mode = NRF_PWM_STEP_AUTO
 };
-static nrf_pwm_values_individual_t boot_rgb_frames[BOOT_RAINBOW_MAX_FRAMES];
+static nrf_pwm_values_individual_t rgb_frames[CHARGING_RAINBOW_FRAME_COUNT];
 static nrf_drv_pwm_config_t boot_rgb_pwm_config = {
     .output_pins = {
         NRF_DRV_PWM_PIN_NOT_USED,
@@ -54,16 +59,36 @@ static nrf_drv_pwm_config_t boot_rgb_pwm_config = {
     .step_mode = NRF_PWM_STEP_AUTO,
 };
 static autotimer *timer;
+static autotimer *charging_timer;
 static uint8_t rgb_marquee_usb_idle_step = 0;
-static uint8_t rgb_marquee_usb_idle_color = RGB_RED;
+static uint8_t charging_particle_frame = 0U;
+static uint8_t charging_last_percentage = 0xFFU;
 static uint8_t rgb_marquee_usb_open_step = 0;
+static nrf_pwm_sequence_t charging_rgb_sequence;
+static volatile bool usb_animation_suspended = false;
 extern bool g_usb_led_marquee_enable;
 
 static uint16_t get_pwmduty(uint8_t light_level);
 
+void rgb_marquee_usb_suspend(void) {
+    usb_animation_suspended = true;
+    if (boot_rgb_pwm_initialized) {
+        nrfx_pwm_stop(&boot_rgb_pwm_ins, false);
+    }
+    if (rgb_marquee_usb_idle_step != 0U || rgb_marquee_usb_open_step != 0U) {
+        nrfx_pwm_stop(&pwm0_ins, false);
+    }
+}
+
+void rgb_marquee_usb_resume(void) {
+    usb_animation_suspended = false;
+    rgb_marquee_usb_idle_step = 0U;
+}
+
 
 void rgb_marquee_init(void) {
     timer = bsp_obtain_timer(0);
+    charging_timer = bsp_obtain_timer(0);
 }
 
 void rgb_marquee_stop(void) {
@@ -75,17 +100,19 @@ void rgb_marquee_stop(void) {
     nrfx_pwm_stop(&pwm0_ins, true);
     nrfx_pwm_uninit(&pwm0_ins);//turn off pwm output
     rgb_marquee_usb_idle_step = 0;
+    charging_particle_frame = 0U;
+    charging_last_percentage = 0xFFU;
     rgb_marquee_usb_open_step = 0;
 }
 
-static void boot_rainbow_prepare_colors(uint8_t frame_count) {
+static void rainbow_prepare_colors(uint8_t frame_count, uint8_t brightness) {
     for (uint8_t frame = 0U; frame < frame_count; frame++) {
         uint16_t phase = (uint16_t)(((uint32_t)frame * RAINBOW_PHASE_CYCLE) / frame_count);
-        rainbow_rgb_t color = rainbow_color_at(phase, BOOT_RAINBOW_BRIGHTNESS);
-        boot_rgb_frames[frame].channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
-        boot_rgb_frames[frame].channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
-        boot_rgb_frames[frame].channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
-        boot_rgb_frames[frame].channel_3 = rainbow_pwm_compare(0U, PWM_MAX);
+        rainbow_rgb_t color = rainbow_color_at(phase, brightness);
+        rgb_frames[frame].channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
+        rgb_frames[frame].channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
+        rgb_frames[frame].channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
+        rgb_frames[frame].channel_3 = rainbow_pwm_compare(0U, PWM_MAX);
     }
 }
 
@@ -139,12 +166,12 @@ void rgb_marquee_boot_rainbow_trail(uint8_t slot, uint8_t final_color) {
         nrf_gpio_pin_clear(led_pins[position]);
     }
 
-    boot_rainbow_prepare_colors(frame_count);
+    rainbow_prepare_colors(frame_count, BOOT_RAINBOW_BRIGHTNESS);
     boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
     boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
     boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
     nrf_pwm_sequence_t boot_rgb_sequence = {
-        .values.p_individual = boot_rgb_frames,
+        .values.p_individual = rgb_frames,
         .length = (uint16_t)(frame_count * 4U),
         .repeats = BOOT_RAINBOW_FRAME_MS - 1U,
         .end_delay = 0U,
@@ -549,117 +576,127 @@ void rgb_marquee_sweep_from_to(uint8_t color, uint8_t start, uint8_t stop) {
 }
 
 
-// Charging animation
-// the current percentage of the battery 0-4 4 represents full electric breathing light
-volatile bool callback_waiting6 = 0;
-void rgb_marquee_usb_idle_pwm_callback(nrfx_pwm_evt_type_t event_type) {
-    if (event_type == NRF_DRV_PWM_EVT_FINISHED) {
-        callback_waiting6 = 1;
-    }
-}
-void rgb_marquee_usb_idle(void) {
+static bool charging_show_positions(uint8_t battery_percentage) {
     uint32_t *led_array = hw_get_led_array();
-    const uint16_t delay_time = 25;
-    static int16_t light_level = 99; //LED brightness value
+    uint8_t filled = charging_filled_count(battery_percentage, RGB_LIST_NUM);
+    uint8_t channel = 0U;
 
-    if (!g_usb_led_marquee_enable && rgb_marquee_usb_idle_step != 0) {
-        light_level = 99;
-        callback_waiting6 = 0;
-        rgb_marquee_stop();
+    CRITICAL_REGION_ENTER();
+    if (g_usb_led_marquee_enable && !usb_animation_suspended) {
+        for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+            if (position < filled) {
+                nrf_gpio_pin_set(led_array[position]);
+            } else {
+                nrf_gpio_pin_clear(led_array[position]);
+            }
+        }
+        for (uint8_t index = 0U; index < 4U; index++) {
+            pwm_config.output_pins[index] = NRF_DRV_PWM_PIN_NOT_USED;
+        }
+        for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+            uint8_t level = charging_particle_level(
+                charging_particle_frame,
+                position,
+                battery_percentage,
+                RGB_LIST_NUM
+            );
+            if (level == 0U) {
+                continue;
+            }
+            pwm_config.output_pins[channel] = led_array[position];
+            switch (channel) {
+                case 0U:
+                    pwm_sequ_val.channel_0 = get_pwmduty(level);
+                    break;
+                case 1U:
+                    pwm_sequ_val.channel_1 = get_pwmduty(level);
+                    break;
+                case 2U:
+                    pwm_sequ_val.channel_2 = get_pwmduty(level);
+                    break;
+                default:
+                    pwm_sequ_val.channel_3 = get_pwmduty(level);
+                    break;
+            }
+            channel++;
+            if (channel == BOOT_TRAIL_LENGTH) {
+                break;
+            }
+        }
+        nrfx_pwm_uninit(&pwm0_ins);
+        APP_ERROR_CHECK(nrf_drv_pwm_init(&pwm0_ins, &pwm_config, NULL));
+        nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+    }
+    CRITICAL_REGION_EXIT();
+    return g_usb_led_marquee_enable && !usb_animation_suspended;
+}
+
+static bool charging_start_rainbow(void) {
+    rainbow_prepare_colors(CHARGING_RAINBOW_FRAME_COUNT, CHARGING_RAINBOW_BRIGHTNESS);
+    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    charging_rgb_sequence = (nrf_pwm_sequence_t) {
+        .values.p_individual = rgb_frames,
+        .length = (uint16_t)(CHARGING_RAINBOW_FRAME_COUNT * 4U),
+        .repeats = CHARGING_RAINBOW_FRAME_REPEATS,
+        .end_delay = 0U,
+    };
+    bool started = false;
+    CRITICAL_REGION_ENTER();
+    if (g_usb_led_marquee_enable && !usb_animation_suspended) {
+        APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
+        boot_rgb_pwm_initialized = true;
+        nrf_drv_pwm_simple_playback(
+            &boot_rgb_pwm_ins,
+            &charging_rgb_sequence,
+            1,
+            NRF_DRV_PWM_FLAG_LOOP
+        );
+        started = true;
+    }
+    CRITICAL_REGION_EXIT();
+    return started;
+}
+
+void rgb_marquee_usb_idle(uint8_t battery_percentage) {
+    if (!g_usb_led_marquee_enable) {
+        if (rgb_marquee_usb_idle_step != 0U) {
+            rgb_marquee_stop();
+        }
         return;
     }
 
-    if (rgb_marquee_usb_idle_step == 0) {
-        set_slot_light_color(rgb_marquee_usb_idle_color);
-        for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-            nrf_gpio_pin_clear(led_array[i]);
+    if (usb_animation_suspended) {
+        return;
+    }
+
+    if (rgb_marquee_usb_idle_step == 0U || battery_percentage != charging_last_percentage) {
+        rgb_marquee_stop();
+        charging_last_percentage = battery_percentage;
+        charging_particle_frame = 0U;
+        if (!charging_start_rainbow()) {
+            return;
         }
-        pwm_config.output_pins[0] = led_array[2];
-        pwm_config.output_pins[1] = led_array[3];
-        pwm_config.output_pins[2] = led_array[4];
-        pwm_config.output_pins[3] = led_array[5];
-        rgb_marquee_usb_idle_step = 1;
-
-        // Reset the state of the lamp when the USB is not turned on
-        rgb_marquee_usb_open_step = 0;
-    }
-
-    if (rgb_marquee_usb_idle_step == 1) {
-        light_level  = 0;
-        rgb_marquee_usb_idle_step = 2;
-    }
-
-    if (rgb_marquee_usb_idle_step == 2 || rgb_marquee_usb_idle_step == 3 || rgb_marquee_usb_idle_step == 4) {
-        if (light_level <= 99) {
-            if (rgb_marquee_usb_idle_step == 2) {
-                //Treatment brightness
-                pwm_sequ_val.channel_0 = get_pwmduty(light_level);
-                pwm_sequ_val.channel_1 = pwm_sequ_val.channel_0;
-                pwm_sequ_val.channel_2 = pwm_sequ_val.channel_0;
-                pwm_sequ_val.channel_3 = pwm_sequ_val.channel_0;
-                nrfx_pwm_uninit(&pwm0_ins); //Close PWM output
-                set_slot_light_color(rgb_marquee_usb_idle_color);
-                nrf_drv_pwm_init(&pwm0_ins, &pwm_config, rgb_marquee_usb_idle_pwm_callback);
-                nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
-                rgb_marquee_usb_idle_step = 3;
-            }
-            if (rgb_marquee_usb_idle_step == 3) {  //Waiting for the output of the PWM module to complete
-                if (callback_waiting6 != 0) {
-                    rgb_marquee_usb_idle_step = 4;
-                    bsp_set_timer(timer, 0);
-                }
-            }
-            if (rgb_marquee_usb_idle_step == 4) {
-                if (!NO_TIMEOUT_1MS(timer, delay_time)) {
-                    callback_waiting = 0;
-                    light_level++;
-                    rgb_marquee_usb_idle_step = 2;
-                }
-            }
-        } else {
-            rgb_marquee_usb_idle_step = 5;
+        bsp_set_timer(charging_timer, 0U);
+        rgb_marquee_usb_open_step = 0U;
+        rgb_marquee_usb_idle_step = 1U;
+        if (!charging_show_positions(battery_percentage)) {
+            rgb_marquee_stop();
         }
+        return;
     }
 
-    if (rgb_marquee_usb_idle_step == 5) {
-        light_level = 99;
-        rgb_marquee_usb_idle_step = 6;
+    if (battery_percentage >= 100U) {
+        return;
     }
-
-    if (rgb_marquee_usb_idle_step == 6 || rgb_marquee_usb_idle_step == 7 || rgb_marquee_usb_idle_step == 8) {
-        if (light_level >= 0) {
-            if (rgb_marquee_usb_idle_step == 6) {
-                //Treatment brightness
-                pwm_sequ_val.channel_0 = get_pwmduty(light_level);
-                pwm_sequ_val.channel_1 = pwm_sequ_val.channel_0;
-                pwm_sequ_val.channel_2 = pwm_sequ_val.channel_0;
-                pwm_sequ_val.channel_3 = pwm_sequ_val.channel_0;
-                nrfx_pwm_uninit(&pwm0_ins); //Close PWM output
-                set_slot_light_color(rgb_marquee_usb_idle_color);
-                nrf_drv_pwm_init(&pwm0_ins, &pwm_config, rgb_marquee_usb_idle_pwm_callback);
-                nrf_drv_pwm_simple_playback(&pwm0_ins, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
-                rgb_marquee_usb_idle_step = 7;
-            }
-            if (rgb_marquee_usb_idle_step == 7) {  //Waiting for the output of the PWM module to complete
-                if (callback_waiting6 != 0) {
-                    rgb_marquee_usb_idle_step = 8;
-                    bsp_set_timer(timer, 0);
-                }
-            }
-            if (rgb_marquee_usb_idle_step == 8) {
-                if (!NO_TIMEOUT_1MS(timer, delay_time)) {
-                    callback_waiting = 0;
-                    light_level--;
-                    rgb_marquee_usb_idle_step = 6;
-                }
-            }
-        } else {
-            rgb_marquee_usb_idle_step = 0;
-            //if (++rgb_marquee_usb_idle_color == RGB_WHITE) rgb_marquee_usb_idle_color = RGB_RED;
-            uint8_t new_color = rand() % 6;
-            for (; new_color == rgb_marquee_usb_idle_color; new_color = rand() % 6);
-            rgb_marquee_usb_idle_color = new_color;
+    if (!NO_TIMEOUT_1MS(charging_timer, CHARGING_PARTICLE_FRAME_MS)) {
+        charging_particle_frame++;
+        if (!charging_show_positions(battery_percentage)) {
+            rgb_marquee_stop();
+            return;
         }
+        bsp_set_timer(charging_timer, 0U);
     }
 }
 

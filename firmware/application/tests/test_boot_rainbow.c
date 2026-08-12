@@ -42,6 +42,31 @@ int main(void) {
 
     assert(rainbow_pwm_compare(0U, 1000U) == (0x8000U | 1000U));
     assert(rainbow_pwm_compare(255U, 1000U) == 0x8000U);
+
+    assert(charging_filled_count(0U, 8U) == 0U);
+    assert(charging_filled_count(12U, 8U) == 0U);
+    assert(charging_filled_count(13U, 8U) == 1U);
+    assert(charging_filled_count(65U, 8U) == 5U);
+    assert(charging_filled_count(99U, 8U) == 7U);
+    assert(charging_filled_count(100U, 8U) == 8U);
+
+    assert(charging_particle_cycle_frames(65U, 8U) == 6U);
+    assert(charging_particle_position(0U, 65U, 8U) == 7);
+    assert(charging_particle_position(1U, 65U, 8U) == 6);
+    assert(charging_particle_position(2U, 65U, 8U) == 5);
+    assert(charging_particle_position(3U, 65U, 8U) == 4);
+    assert(charging_particle_position(4U, 65U, 8U) == -1);
+    assert(charging_particle_position(5U, 65U, 8U) == -1);
+    assert(charging_particle_position(6U, 65U, 8U) == 7);
+    assert(charging_particle_position(0U, 100U, 8U) == -1);
+
+    assert(charging_particle_level(0U, 7U, 65U, 8U) == 99U);
+    assert(charging_particle_level(1U, 7U, 65U, 8U) == 68U);
+    assert(charging_particle_level(1U, 6U, 65U, 8U) == 99U);
+    assert(charging_particle_level(3U, 4U, 65U, 8U) == 0U);
+    assert(charging_particle_level(4U, 5U, 65U, 8U) == 42U);
+    assert(charging_particle_level(5U, 5U, 65U, 8U) == 22U);
+    assert(charging_particle_level(5U, 4U, 65U, 8U) == 0U);
     puts("boot rainbow model tests passed");
     return 0;
 }

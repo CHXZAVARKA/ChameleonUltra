@@ -15,6 +15,7 @@
 #include "protocols/jablotron.h"
 #include "protocols/pac.h"
 #include "protocols/viking.h"
+#include "rgb_marquee.h"
 #include "syssleep.h"
 #include "tag_emulation.h"
 #include "tag_persistence.h"
@@ -86,6 +87,7 @@ static void lpcomp_event_handler(nrf_lpcomp_event_t event) {
     g_is_tag_emulating = true;
     // turn off USB light effect when emulating cards
     g_usb_led_marquee_enable = false;
+    rgb_marquee_usb_suspend();
 
     // LED status update
     set_slot_light_color(RGB_BLUE);
@@ -180,6 +182,9 @@ static void lf_sense_enable(void) {
 }
 
 static void lf_sense_disable(void) {
+    g_is_tag_emulating = false;
+    g_usb_led_marquee_enable = false;
+    rgb_marquee_usb_suspend();
     nrfx_pwm_uninit(&m_broadcast);
     nrfx_lpcomp_uninit();
     m_pwm_seq = NULL;
