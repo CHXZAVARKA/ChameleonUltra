@@ -196,11 +196,12 @@ static void battery_indicator_show_level(uint8_t battery_percentage) {
     battery_indicator_last_percentage = battery_percentage;
 }
 
-static void battery_indicator_show_stock(bool measurement_available, uint8_t battery_percentage) {
+static void battery_indicator_show_stock(rgb_battery_sample_provider_t sample_provider) {
     uint32_t *led_pins = hw_get_led_array();
+    uint8_t battery_percentage;
 
     rgb_marquee_stop();
-    if (!measurement_available) {
+    while (!sample_provider(&battery_percentage)) {
         set_slot_light_color(RGB_RED);
         for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
             nrf_gpio_pin_clear(led_pins[position]);
@@ -210,7 +211,6 @@ static void battery_indicator_show_stock(bool measurement_available, uint8_t bat
             nrf_gpio_pin_set(led_pins[position]);
         }
         bsp_delay_ms(BATTERY_WAIT_FRAME_MS);
-        return;
     }
 
     uint8_t lit_count = battery_indicator_lit_count(battery_percentage, RGB_LIST_NUM);
@@ -224,10 +224,11 @@ static void battery_indicator_show_stock(bool measurement_available, uint8_t bat
     }
 }
 
-static void battery_indicator_show_long_b(bool measurement_available, uint8_t battery_percentage) {
+static void battery_indicator_show_long_b(rgb_battery_sample_provider_t sample_provider) {
     uint32_t *led_pins = hw_get_led_array();
+    uint8_t battery_percentage;
 
-    if (measurement_available) {
+    if (sample_provider(&battery_percentage)) {
         if (battery_indicator_state != BATTERY_INDICATOR_LEVEL ||
                 battery_percentage != battery_indicator_last_percentage) {
             battery_indicator_show_level(battery_percentage);
@@ -265,13 +266,12 @@ static void battery_indicator_show_long_b(bool measurement_available, uint8_t ba
 
 void rgb_marquee_show_battery(
     rgb_battery_trigger_t trigger,
-    bool measurement_available,
-    uint8_t battery_percentage
+    rgb_battery_sample_provider_t sample_provider
 ) {
     if (trigger == RGB_BATTERY_TRIGGER_LONG_B) {
-        battery_indicator_show_long_b(measurement_available, battery_percentage);
+        battery_indicator_show_long_b(sample_provider);
     } else {
-        battery_indicator_show_stock(measurement_available, battery_percentage);
+        battery_indicator_show_stock(sample_provider);
     }
 }
 

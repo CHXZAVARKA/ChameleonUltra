@@ -9,7 +9,7 @@
 extern uint16_t batt_lvl_in_milli_volts;
 extern uint8_t percentage_batt_lvl;
 
-bool battery_level_is_available(void);
+bool battery_level_read(uint8_t *percentage);
 
 typedef void (*lf_adc_callback_t)(nrf_saadc_value_t *, size_t);
 

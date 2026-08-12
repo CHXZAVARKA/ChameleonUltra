@@ -912,8 +912,7 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
         case SettingsButtonShowBattery:
             rgb_marquee_show_battery(
                 RGB_BATTERY_TRIGGER_OTHER_MAPPING,
-                battery_level_is_available(),
-                percentage_batt_lvl
+                battery_level_read
             );
             break;
 
@@ -942,8 +941,7 @@ static void button_press_process(void) {
         g_usb_led_marquee_enable = false;
         rgb_marquee_show_battery(
             RGB_BATTERY_TRIGGER_LONG_B,
-            battery_level_is_available(),
-            percentage_batt_lvl
+            battery_level_read
         );
     } else if (battery_action == BATTERY_BUTTON_RESTORE) {
         rgb_marquee_stop();

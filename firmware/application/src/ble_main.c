@@ -756,8 +756,12 @@ static void battery_level_meas_timeout_handler(void *p_context) {
     }
 }
 
-bool battery_level_is_available(void) {
-    return m_battery_level_available;
+bool battery_level_read(uint8_t *percentage) {
+    if (!m_battery_level_available) {
+        return false;
+    }
+    *percentage = percentage_batt_lvl;
+    return true;
 }
 
 void create_battery_timer(void) {

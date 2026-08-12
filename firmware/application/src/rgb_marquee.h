@@ -16,6 +16,8 @@ typedef enum {
     RGB_BATTERY_TRIGGER_LONG_B,
 } rgb_battery_trigger_t;
 
+typedef bool (*rgb_battery_sample_provider_t)(uint8_t *percentage);
+
 void rgb_marquee_init(void);
 void rgb_marquee_stop(void);
 void rgb_marquee_reset(void);
@@ -23,8 +25,7 @@ bool rgb_marquee_is_enabled(void);
 void rgb_marquee_boot_rainbow_trail(uint8_t slot, uint8_t final_color);
 void rgb_marquee_show_battery(
     rgb_battery_trigger_t trigger,
-    bool measurement_available,
-    uint8_t battery_percentage
+    rgb_battery_sample_provider_t sample_provider
 );
 void rgb_marquee_full_startup_rainbow(uint8_t slot, uint8_t final_color);
 bool rgb_marquee_full_shutdown_begin(uint8_t slot);
