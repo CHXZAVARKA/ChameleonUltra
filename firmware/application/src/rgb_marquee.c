@@ -74,6 +74,20 @@ extern bool g_usb_led_marquee_enable;
 
 static uint16_t get_pwmduty(uint8_t light_level);
 
+static void color_layer_start(nrf_pwm_sequence_t const *sequence, uint32_t playback_flags) {
+    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
+    boot_rgb_pwm_initialized = true;
+    nrf_drv_pwm_simple_playback(
+        &boot_rgb_pwm_ins,
+        sequence,
+        1,
+        playback_flags
+    );
+}
+
 void rgb_marquee_usb_suspend(rgb_led_owner_t owner) {
     nrf_atomic_u32_or(&usb_animation_owners, (uint32_t)owner);
     if (boot_rgb_pwm_initialized) {
@@ -137,31 +151,23 @@ static bool rainbow_start_color_layer(uint8_t frame_count, uint8_t frame_ms, uin
 
     rgb_marquee_stop();
     rainbow_prepare_colors(frame_count, brightness);
-    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
-    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
-    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
     motion_rgb_sequence.values.p_individual = rgb_frames;
     motion_rgb_sequence.length = (uint16_t)(frame_count * 4U);
     motion_rgb_sequence.repeats = (uint16_t)(frame_ms - 1U);
     motion_rgb_sequence.end_delay = 0U;
-    APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
-    boot_rgb_pwm_initialized = true;
-    nrf_drv_pwm_simple_playback(
-        &boot_rgb_pwm_ins,
-        &motion_rgb_sequence,
-        1,
-        NRF_DRV_PWM_FLAG_STOP
-    );
+    color_layer_start(&motion_rgb_sequence, NRF_DRV_PWM_FLAG_STOP);
     return true;
 }
 
-void rgb_marquee_show_battery_color(uint8_t battery_percentage) {
+void rgb_marquee_show_battery(uint8_t battery_percentage) {
     battery_indicator_rgb_t color = battery_indicator_color(battery_percentage);
+    uint8_t lit_count = battery_indicator_lit_count(battery_percentage, RGB_LIST_NUM);
+    uint32_t *led_pins = hw_get_led_array();
 
     rgb_marquee_stop();
-    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
-    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
-    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    for (uint8_t position = 0U; position < RGB_LIST_NUM; position++) {
+        nrf_gpio_pin_clear(led_pins[position]);
+    }
     rgb_frames[0].channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
     rgb_frames[0].channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
     rgb_frames[0].channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
@@ -170,14 +176,11 @@ void rgb_marquee_show_battery_color(uint8_t battery_percentage) {
     motion_rgb_sequence.length = 4U;
     motion_rgb_sequence.repeats = 0U;
     motion_rgb_sequence.end_delay = 0U;
-    APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
-    boot_rgb_pwm_initialized = true;
-    nrf_drv_pwm_simple_playback(
-        &boot_rgb_pwm_ins,
-        &motion_rgb_sequence,
-        1,
-        NRF_DRV_PWM_FLAG_LOOP
-    );
+    color_layer_start(&motion_rgb_sequence, NRF_DRV_PWM_FLAG_LOOP);
+    for (uint8_t position = 0U; position < lit_count; position++) {
+        nrf_gpio_pin_set(led_pins[position]);
+        bsp_delay_ms(50);
+    }
 }
 
 static void pwm_position_channel_set(uint8_t channel, uint16_t duty) {

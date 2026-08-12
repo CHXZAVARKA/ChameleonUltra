@@ -39,7 +39,6 @@ NRF_LOG_MODULE_REGISTER();
 #include "tag_emulation.h"
 #include "usb_main.h"
 #include "rgb_marquee.h"
-#include "rgb/battery_indicator.h"
 #include "tag_persistence.h"
 #include "settings.h"
 
@@ -634,18 +633,7 @@ static void show_battery(void) {
         }
         bsp_delay_ms(100);
     }
-    // Keep the stock spatial gauge and timing, changing only its shared RGB color.
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        nrf_gpio_pin_clear(led_pins[i]);
-    }
-    rgb_marquee_show_battery_color(percentage_batt_lvl);
-    uint8_t lit_count = battery_indicator_lit_count(percentage_batt_lvl, RGB_LIST_NUM);
-    for (int i = 0; i < RGB_LIST_NUM; i++) {
-        if (i < lit_count) {
-            nrf_gpio_pin_set(led_pins[i]);
-            bsp_delay_ms(50);
-        }
-    }
+    rgb_marquee_show_battery(percentage_batt_lvl);
     // nothing special to finish, we wait for sleep or slot change
 }
 
