@@ -7,6 +7,7 @@
 #include "app_usbd_core.h"
 #include "app_usbd_serial_num.h"
 #include "app_usbd_string_desc.h"
+#include "rgb_marquee.h"
 
 #define NRF_LOG_MODULE_NAME usb_cdc
 #include "nrf_log.h"
@@ -108,6 +109,7 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
                 app_usbd_enable();
             }
             g_usb_led_marquee_enable = true;
+            rgb_marquee_usb_resume();
             break;
 
         case APP_USBD_EVT_POWER_REMOVED:
@@ -115,12 +117,15 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event) {
             NRF_LOG_INFO("USB power removed");
             g_usb_connected = false;
             g_usb_led_marquee_enable = false;
+            rgb_marquee_usb_suspend();
             app_usbd_stop();
             break;
 
         case APP_USBD_EVT_POWER_READY:
             NRF_LOG_INFO("USB ready");
             g_usb_connected = true;
+            g_usb_led_marquee_enable = true;
+            rgb_marquee_usb_resume();
             app_usbd_start();
             break;
 
@@ -179,4 +184,8 @@ int fputc(int ch, FILE *f){
 
 bool is_usb_working(void) {
     return g_usb_port_opened;
+}
+
+bool is_usb_powered(void) {
+    return g_usb_connected;
 }

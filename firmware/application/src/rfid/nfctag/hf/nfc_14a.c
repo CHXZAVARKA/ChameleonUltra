@@ -14,6 +14,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "byte_mirror.h"
 
 #include "rfid_main.h"
+#include "rgb_marquee.h"
 #include "syssleep.h"
 #include "tag_emulation.h"
 
@@ -651,6 +652,7 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
 
             g_is_tag_emulating = true;
             g_usb_led_marquee_enable = false;
+            rgb_marquee_usb_suspend();
 
             set_slot_light_color(RGB_GREEN);
             TAG_FIELD_LED_ON()
@@ -803,6 +805,9 @@ void nfc_tag_14a_sense_switch(bool enable) {
     } else {
         if (!enable) {
             m_nfc_sense_state = NFC_SENSE_STATE_DISABLE;
+            g_is_tag_emulating = false;
+            g_usb_led_marquee_enable = false;
+            rgb_marquee_usb_suspend();
             //Directly anti -initialization NFC peripherals can turn off NFC field induction
             // SDK inside us to call us nrfx_nfct_disable
             nrfx_nfct_uninit();

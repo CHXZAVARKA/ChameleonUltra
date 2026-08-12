@@ -1,12 +1,14 @@
 #include <stdint.h>
 #include "rfid_main.h"
 #include "rgb_marquee.h"
+#include "usb_main.h"
 
 //The current mode of the device
 device_mode_t rfid_state = DEVICE_MODE_NONE;
 
 // External declaration for field state
 extern bool m_is_field_on;
+extern bool g_usb_led_marquee_enable;
 
 /**
  * @brief Function for enter tag reader mode
@@ -69,6 +71,10 @@ void tag_mode_enter(void) {
 
         // to run tag emulation
         tag_emulation_sense_run();
+        if (is_usb_powered()) {
+            g_usb_led_marquee_enable = true;
+            rgb_marquee_usb_resume();
+        }
     }
 }
 

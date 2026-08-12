@@ -42,6 +42,8 @@ NRF_LOG_MODULE_REGISTER();
 #include "tag_persistence.h"
 #include "settings.h"
 
+extern bool g_usb_led_marquee_enable;
+
 #if defined(PROJECT_CHAMELEON_ULTRA)
 #include "rc522.h"
 #endif
@@ -850,6 +852,8 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
             break;
         case SettingsButtonNfcFieldGenerator:
             if (!m_is_field_on) {
+                g_usb_led_marquee_enable = false;
+                rgb_marquee_usb_suspend();
                 // Initialize reader hardware if not already in reader mode
                 device_mode_t current_mode = get_device_mode();
                 if (current_mode != DEVICE_MODE_READER) {
@@ -894,6 +898,10 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
 
                 // Restore normal LED
                 light_up_by_slot();
+                if (is_usb_powered()) {
+                    g_usb_led_marquee_enable = true;
+                    rgb_marquee_usb_resume();
+                }
 
                 // Restart sleep timer
                 NRF_LOG_INFO("Field off, restarting sleep timer");
@@ -915,7 +923,6 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
 
 /**@brief button press event process
  */
-extern bool g_usb_led_marquee_enable;
 static void button_press_process(void) {
     // Make sure that one of the AB buttons has a click event
     if (m_is_b_btn_release || m_is_a_btn_release) {
@@ -969,7 +976,7 @@ static void blink_usb_led_status(void) {
                     rgb_marquee_usb_open_sweep(color, dir);
                 }
             } else {
-                rgb_marquee_usb_idle();
+                rgb_marquee_usb_idle(percentage_batt_lvl);
             }
         } else {
             if (is_working) {
