@@ -7,6 +7,7 @@
 #include "bsp_delay.h"
 #include "rgb_marquee.h"
 #include "bsp_time.h"
+#include "rgb/battery_indicator.h"
 #include "rgb/rainbow_color.h"
 
 
@@ -152,6 +153,31 @@ static bool rainbow_start_color_layer(uint8_t frame_count, uint8_t frame_ms, uin
         NRF_DRV_PWM_FLAG_STOP
     );
     return true;
+}
+
+void rgb_marquee_show_battery_color(uint8_t battery_percentage) {
+    battery_indicator_rgb_t color = battery_indicator_color(battery_percentage);
+
+    rgb_marquee_stop();
+    boot_rgb_pwm_config.output_pins[0] = LED_R | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[1] = LED_G | NRF_DRV_PWM_PIN_INVERTED;
+    boot_rgb_pwm_config.output_pins[2] = LED_B | NRF_DRV_PWM_PIN_INVERTED;
+    rgb_frames[0].channel_0 = rainbow_pwm_compare(color.red, PWM_MAX);
+    rgb_frames[0].channel_1 = rainbow_pwm_compare(color.green, PWM_MAX);
+    rgb_frames[0].channel_2 = rainbow_pwm_compare(color.blue, PWM_MAX);
+    rgb_frames[0].channel_3 = rainbow_pwm_compare(0U, PWM_MAX);
+    motion_rgb_sequence.values.p_individual = rgb_frames;
+    motion_rgb_sequence.length = 4U;
+    motion_rgb_sequence.repeats = 0U;
+    motion_rgb_sequence.end_delay = 0U;
+    APP_ERROR_CHECK(nrf_drv_pwm_init(&boot_rgb_pwm_ins, &boot_rgb_pwm_config, NULL));
+    boot_rgb_pwm_initialized = true;
+    nrf_drv_pwm_simple_playback(
+        &boot_rgb_pwm_ins,
+        &motion_rgb_sequence,
+        1,
+        NRF_DRV_PWM_FLAG_LOOP
+    );
 }
 
 static void pwm_position_channel_set(uint8_t channel, uint16_t duty) {
