@@ -48,6 +48,7 @@ void tag_mode_enter(void) {
         if (m_is_field_on) {
             pcd_14a_reader_antenna_off();
             m_is_field_on = false;
+            rgb_marquee_usb_resume(RGB_LED_OWNER_FIELD_GENERATOR);
         }
 
         // uninit reader
