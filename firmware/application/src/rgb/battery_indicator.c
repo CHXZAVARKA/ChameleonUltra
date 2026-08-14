@@ -84,3 +84,14 @@ uint8_t battery_indicator_lit_count(uint8_t percentage, uint8_t position_count) 
     uint16_t scaled = (uint16_t)bounded * position_count;
     return (uint8_t)((scaled + 99U) / 100U);
 }
+
+uint8_t battery_indicator_hardware_index(
+    uint8_t left_to_right_position,
+    uint8_t position_count
+) {
+    if (position_count == 0U || left_to_right_position >= position_count) {
+        return 0U;
+    }
+
+    return (uint8_t)(position_count - 1U - left_to_right_position);
+}

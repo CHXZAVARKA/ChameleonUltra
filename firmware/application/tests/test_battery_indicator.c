@@ -49,9 +49,18 @@ static void assert_stock_spatial_gauge_boundaries(void) {
     assert(battery_indicator_lit_count(100U, 0U) == 0U);
 }
 
+static void assert_physical_left_to_right_order(void) {
+    assert(battery_indicator_hardware_index(0U, 8U) == 7U);
+    assert(battery_indicator_hardware_index(1U, 8U) == 6U);
+    assert(battery_indicator_hardware_index(6U, 8U) == 1U);
+    assert(battery_indicator_hardware_index(7U, 8U) == 0U);
+    assert(battery_indicator_hardware_index(0U, 0U) == 0U);
+}
+
 int main(void) {
     assert_color_boundaries();
     assert_monotonic_red_to_green_gradient();
     assert_stock_spatial_gauge_boundaries();
+    assert_physical_left_to_right_order();
     return 0;
 }

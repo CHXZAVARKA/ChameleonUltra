@@ -92,9 +92,11 @@ assert battery_level, "could not parse long-B battery level renderer"
 body = battery_level.group("body")
 assert re.search(
     r"for \(uint8_t position = 0U; position < lit_count; position\+\+\) \{"
-    r".*?nrf_gpio_pin_set\(led_pins\[position\]\)",
+    r".*?battery_indicator_hardware_index\("
+    r"\s*position,\s*RGB_LIST_NUM\s*\)"
+    r".*?nrf_gpio_pin_set\(led_pins\[hardware_index\]\)",
     body,
     flags=re.DOTALL,
-), "button B must fill the battery gauge from LED 1 toward LED 8"
+), "button B must fill from the physical left edge toward the right edge"
 
 print("RGB marquee hardware contract tests passed")

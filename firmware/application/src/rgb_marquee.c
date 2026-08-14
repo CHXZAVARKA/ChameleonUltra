@@ -207,7 +207,11 @@ static void battery_indicator_show_level(uint8_t battery_percentage) {
     motion_rgb_sequence.end_delay = 0U;
     color_layer_start(&motion_rgb_sequence, NRF_DRV_PWM_FLAG_LOOP);
     for (uint8_t position = 0U; position < lit_count; position++) {
-        nrf_gpio_pin_set(led_pins[position]);
+        uint8_t hardware_index = battery_indicator_hardware_index(
+            position,
+            RGB_LIST_NUM
+        );
+        nrf_gpio_pin_set(led_pins[hardware_index]);
         bsp_delay_ms(50);
     }
     battery_indicator_state = BATTERY_INDICATOR_LEVEL;
@@ -237,7 +241,11 @@ static void battery_indicator_show_stock(rgb_battery_sample_provider_t sample_pr
     }
     set_slot_light_color(RGB_CYAN);
     for (uint8_t position = 0U; position < lit_count; position++) {
-        nrf_gpio_pin_set(led_pins[position]);
+        uint8_t hardware_index = battery_indicator_hardware_index(
+            position,
+            RGB_LIST_NUM
+        );
+        nrf_gpio_pin_set(led_pins[hardware_index]);
         bsp_delay_ms(50);
     }
 }
