@@ -83,4 +83,18 @@ assert "rgb_marquee_usb_open_sweep" not in body
 assert "rgb_marquee_usb_open_symmetric" not in body
 assert body.count("rgb_marquee_usb_idle(percentage_batt_lvl)") == 1
 
+battery_level = re.search(
+    r"static void battery_indicator_show_level\(uint8_t battery_percentage\) \{(?P<body>.*?)\n\}",
+    SOURCE,
+    flags=re.DOTALL,
+)
+assert battery_level, "could not parse long-B battery level renderer"
+body = battery_level.group("body")
+assert re.search(
+    r"for \(uint8_t position = 0U; position < lit_count; position\+\+\) \{"
+    r".*?nrf_gpio_pin_set\(led_pins\[position\]\)",
+    body,
+    flags=re.DOTALL,
+), "button B must fill the battery gauge from LED 1 toward LED 8"
+
 print("RGB marquee hardware contract tests passed")

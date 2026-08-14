@@ -220,7 +220,9 @@ int main(void) {
     assert(charging_filled_count(100U, 8U) == 8U);
 
     assert(CHARGING_PARTICLE_FRAME_MS >= 120U);
-    assert(stock_trail_pwm_compare(0U) == 1U);
+    // The rainbow head must use the same full position brightness as every
+    // other fully lit state. Trailing ages remain progressively dimmer.
+    assert(stock_trail_pwm_compare(0U) == 0U);
     assert(stock_trail_pwm_compare(1U) == 600U);
     assert(stock_trail_pwm_compare(2U) == 880U);
     assert(stock_trail_pwm_compare(3U) == 980U);

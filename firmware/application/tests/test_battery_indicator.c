@@ -31,12 +31,17 @@ static void assert_monotonic_red_to_green_gradient(void) {
 }
 
 static void assert_stock_spatial_gauge_boundaries(void) {
-    assert(battery_indicator_lit_count(0U, 8U) == 1U);
+    assert(battery_indicator_lit_count(0U, 8U) == 0U);
     assert(battery_indicator_lit_count(1U, 8U) == 1U);
     assert(battery_indicator_lit_count(12U, 8U) == 1U);
     assert(battery_indicator_lit_count(13U, 8U) == 2U);
     assert(battery_indicator_lit_count(24U, 8U) == 2U);
-    assert(battery_indicator_lit_count(25U, 8U) == 3U);
+    assert(battery_indicator_lit_count(25U, 8U) == 2U);
+    assert(battery_indicator_lit_count(26U, 8U) == 3U);
+    assert(battery_indicator_lit_count(50U, 8U) == 4U);
+    assert(battery_indicator_lit_count(51U, 8U) == 5U);
+    assert(battery_indicator_lit_count(75U, 8U) == 6U);
+    assert(battery_indicator_lit_count(76U, 8U) == 7U);
     assert(battery_indicator_lit_count(87U, 8U) == 7U);
     assert(battery_indicator_lit_count(88U, 8U) == 8U);
     assert(battery_indicator_lit_count(99U, 8U) == 8U);

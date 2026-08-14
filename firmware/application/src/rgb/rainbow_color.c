@@ -109,7 +109,7 @@ uint32_t rainbow_pwm_repeats(uint16_t frame_ms) {
 }
 
 uint16_t stock_trail_pwm_compare(uint8_t age) {
-    static const uint16_t compares[BOOT_TRAIL_LENGTH] = {1U, 600U, 880U, 980U};
+    static const uint16_t compares[BOOT_TRAIL_LENGTH] = {0U, 600U, 880U, 980U};
     return age < BOOT_TRAIL_LENGTH ? compares[age] : 1000U;
 }
 

@@ -76,11 +76,11 @@ battery_indicator_rgb_t battery_indicator_color(uint8_t percentage) {
 }
 
 uint8_t battery_indicator_lit_count(uint8_t percentage, uint8_t position_count) {
-    if (position_count == 0U) {
+    if (percentage == 0U || position_count == 0U) {
         return 0U;
     }
 
-    uint16_t last_lit_index = ((uint16_t)percentage * 2U) / 25U;
-    uint16_t lit_count = last_lit_index + 1U;
-    return lit_count < position_count ? (uint8_t)lit_count : position_count;
+    uint8_t bounded = percentage > 100U ? 100U : percentage;
+    uint16_t scaled = (uint16_t)bounded * position_count;
+    return (uint8_t)((scaled + 99U) / 100U);
 }
