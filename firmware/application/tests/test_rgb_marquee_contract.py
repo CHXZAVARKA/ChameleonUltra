@@ -8,6 +8,9 @@ import re
 SOURCE = (
     Path(__file__).resolve().parents[1] / "src" / "rgb_marquee.c"
 ).read_text(encoding="utf-8")
+APP_MAIN = (
+    Path(__file__).resolve().parents[1] / "src" / "app_main.c"
+).read_text(encoding="utf-8")
 
 
 def initializer(name: str) -> str:
@@ -65,5 +68,19 @@ position_writes = re.findall(
     SOURCE,
 )
 assert len(position_writes) == 4, "PWM1 lifecycle must stay inside its two helpers"
+
+# Opening the CDC port must not replace the charging rainbow with the old
+# slot-color sweep. USB power owns one continuous charging presentation before
+# and after the desktop or mobile app opens the serial connection.
+usb_status = re.search(
+    r"static void blink_usb_led_status\(void\) \{(?P<body>.*?)\n\}",
+    APP_MAIN,
+    flags=re.DOTALL,
+)
+assert usb_status, "could not parse USB LED status handler"
+body = usb_status.group("body")
+assert "rgb_marquee_usb_open_sweep" not in body
+assert "rgb_marquee_usb_open_symmetric" not in body
+assert body.count("rgb_marquee_usb_idle(percentage_batt_lvl)") == 1
 
 print("RGB marquee hardware contract tests passed")

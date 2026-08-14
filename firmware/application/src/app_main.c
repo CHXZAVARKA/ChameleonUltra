@@ -979,11 +979,9 @@ static void button_press_process(void) {
     }
 }
 
-extern bool g_usb_port_opened;
 static void blink_usb_led_status(void) {
     uint8_t slot = tag_emulation_get_slot();
     uint8_t color = get_color_by_slot(slot);
-    uint8_t dir = slot > 3 ? 1 : 0;
     static bool is_working = false;
     if (nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
         if (is_working) {
@@ -996,16 +994,7 @@ static void blink_usb_led_status(void) {
         // The light effect is enabled and can be displayed
         if (rgb_marquee_is_enabled()) {
             is_working = true;
-            if (g_usb_port_opened) {
-                uint8_t animation_config = settings_get_animation_config();
-                if (animation_config == SettingsAnimationModeSymmetric) {
-                    rgb_marquee_usb_open_symmetric(color);
-                } else {
-                    rgb_marquee_usb_open_sweep(color, dir);
-                }
-            } else {
-                rgb_marquee_usb_idle(percentage_batt_lvl);
-            }
+            rgb_marquee_usb_idle(percentage_batt_lvl);
         } else {
             if (is_working) {
                 is_working = false;
