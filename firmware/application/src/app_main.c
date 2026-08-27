@@ -531,6 +531,11 @@ static void check_wakeup_src(void) {
             }
         }
 
+        // A reader can keep its field continuously present while System OFF
+        // wake resets and boots the device. Start emulation before any
+        // decorative LED work so the first polling window can reach the tag.
+        tag_mode_enter();
+
         // It is currently the wake-up system of the emulation card event, we can make the strong lights on the field first
         TAG_FIELD_LED_ON();
 

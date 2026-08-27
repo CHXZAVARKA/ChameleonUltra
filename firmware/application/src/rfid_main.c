@@ -41,6 +41,9 @@ void reader_mode_enter(void) {
  */
 void tag_mode_enter(void) {
     if (rfid_state != DEVICE_MODE_TAG) {
+#if defined(PROJECT_CHAMELEON_ULTRA)
+        bool leaving_reader_mode = rfid_state == DEVICE_MODE_READER;
+#endif
         rfid_state = DEVICE_MODE_TAG;
 
 #if defined(PROJECT_CHAMELEON_ULTRA)
@@ -65,9 +68,12 @@ void tag_mode_enter(void) {
 
         nrf_gpio_cfg_output(HF_ANT_SEL);
         nrf_gpio_pin_set(HF_ANT_SEL);       // hf ant switch to emulation mode
-        // give time for fields to shutdown, else we get spurious LF detection triggered in LF emul
-        // need at least about 30ms on dev kit
-        bsp_delay_ms(60);
+        if (leaving_reader_mode) {
+            // Give the generated reader field time to shut down, otherwise it
+            // can trigger a spurious LF detection when emulation starts.
+            // The dev kit needs at least about 30 ms.
+            bsp_delay_ms(60);
+        }
 #endif
 
         // to run tag emulation

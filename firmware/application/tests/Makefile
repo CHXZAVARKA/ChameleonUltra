@@ -17,6 +17,7 @@ test: $(SLOT_TEST_BINARY) $(LED_TEST_BINARY) $(BATTERY_TEST_BINARY) $(BATTERY_BU
 	python3 test_app_cmd_contract.py
 	python3 test_ble_response_contract.py
 	python3 test_rgb_marquee_contract.py
+	python3 test_hf_wake_contract.py
 
 $(SLOT_TEST_BINARY): test_slot_reorder.c \
 	$(SOURCE_DIR)/rfid/nfctag/slot_reorder.c \
