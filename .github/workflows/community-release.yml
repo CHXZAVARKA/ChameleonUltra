@@ -1,0 +1,60 @@
+name: Community firmware release
+on:
+  push:
+    branches: ['codex/build-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: community-firmware-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'CHXZAVARKA/ChameleonUltra'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test custom slot LED policy
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Ifirmware/application/src firmware/application/tests/slot_led_policy_test.c -o "$RUNNER_TEMP/slot-led-test"
+          "$RUNNER_TEMP/slot-led-test"
+  firmware:
+    needs: verify
+    uses: ./.github/workflows/build_firmware.yml
+    with:
+      publish-builder: false
+    permissions:
+      contents: read
+  publish:
+    needs: firmware
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-artifacts-*
+          merge-multiple: true
+          path: release
+      - name: Publish complete community firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          release_date="${RELEASE_BRANCH#codex/build-}"
+          [[ "$release_date" =~ ^20[0-9]{2}\.[0-9]{2}\.[0-9]{2}([.-][0-9]+)?$ ]]
+          tag="community-$release_date"
+          test -f release/ultra-dfu-app.zip
+          test -f release/lite-dfu-app.zip
+          test -f release/ultra-dfu-full.zip
+          test -f release/lite-dfu-full.zip
+          printf '%s\n' "$GITHUB_SHA" > release/SOURCE_COMMIT.txt
+          (cd release && sha256sum * > SHA256SUMS)
+          printf 'Custom Chameleon Ultra/Lite firmware, source commit `%s`.\n\nIncludes latest official upstream plus custom slot LED colors, yellow indication of empty slots, and adjacent slot cycling.\n\nThe host LED policy test and both firmware builds passed. No physical flashing or card tests were performed for this release. Use the application-only DFU package for normal firmware updates.\n' "$GITHUB_SHA" > release-notes.md
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite its artifacts.' >&2
+            exit 1
+          fi
+          gh release create "$tag" release/* --target "$GITHUB_SHA" --title "Chameleon firmware $tag" --notes-file release-notes.md --prerelease

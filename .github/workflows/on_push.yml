@@ -9,12 +9,14 @@ concurrency:
 
 jobs:
   firmware_pipeline:
+    if: github.repository != 'CHXZAVARKA/ChameleonUltra' || !startsWith(github.ref, 'refs/heads/codex/build-')
     name: Build Firmware
     permissions:
       packages: write
       contents: read
     uses: ./.github/workflows/build_firmware.yml
   client_pipeline:
+    if: github.repository != 'CHXZAVARKA/ChameleonUltra' || !startsWith(github.ref, 'refs/heads/codex/build-')
     name: Build Firmware
     permissions:
       contents: read
