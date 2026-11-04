@@ -20,11 +20,29 @@ jobs:
           "$RUNNER_TEMP/slot-led-test"
   firmware:
     needs: verify
-    uses: ./.github/workflows/build_firmware.yml
-    with:
-      publish-builder: false
-    permissions:
-      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build official firmware builder locally
+        run: docker build --tag chameleon-community-builder firmware
+      - name: Build Ultra and Lite without publishing a builder image
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for device in ultra lite; do
+            docker run --rm -v "$PWD:/workdir" -e CURRENT_DEVICE_TYPE="$device" chameleon-community-builder firmware/build.sh
+            sudo cp firmware/objects/"$device"-*.zip release/
+          done
+          sudo chown -R "$(id -u):$(id -g)" release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: community-firmware-packages
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 1
   publish:
     needs: firmware
     runs-on: ubuntu-24.04
@@ -34,7 +52,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          pattern: release-artifacts-*
+          pattern: community-firmware-packages
           merge-multiple: true
           path: release
       - name: Publish complete community firmware
